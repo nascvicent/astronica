@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rokit install)",
+      "Bash(rokit add UpliftGames/wally@0.3.2)",
+      "Bash(wally --version)",
+      "Bash(wally install)",
+      "Bash(git checkout -b feature/lumen-currency)",
+      "Bash(git add .gitignore default.project.json rokit.toml wally.toml src/client/init.client.luau src/server/init.server.luau src/client/Controllers/LumenController.luau src/client/UI/LumenDisplay.luau src/server/Services/LumenService.luau)",
+      "Bash(git commit:*)",
+      "Bash(git push -u origin feature/lumen-currency)",
+      "Bash(gh pr:*)",
+      "Bash(\"/c/Program Files/GitHub:*)"
+    ]
+  }
+}

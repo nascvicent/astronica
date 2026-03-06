@@ -30,6 +30,7 @@ function LumenDisplay:_build()
 	frame.BackgroundTransparency = 0.15
 	frame.BorderSizePixel = 0
 	frame.Parent = screenGui
+	
 
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = UDim.new(0, 12)

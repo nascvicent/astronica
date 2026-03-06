@@ -9,7 +9,7 @@ local AUTO_SAVE_INTERVAL = 300
 
 -- Jogador que recebe 5000 LUM ao entrar (teste)
 local TEST_PLAYER = "einsteinburro"
-local TEST_GRANT = 5000
+local TEST_GRANT = 1
 
 local lumenStore = DataStoreService:GetDataStore(DATASTORE_NAME)
 
@@ -29,23 +29,29 @@ local LumenService = Knit.CreateService({
 })
 
 function LumenService:AddLumens(player: Player, amount: number): number
-	assert(amount >= 0, "AddLumens amount must be non-negative")
-	local userId = player.UserId
-	local current = self._lumenData[userId] or 0
-	local newAmount = current + amount
-	self._lumenData[userId] = newAmount
-	self.Client.LumensChanged:Fire(player, newAmount)
-	return newAmount
+    assert(amount >= 0, "AddLumens amount must be non-negative")
+    local userId = player.UserId
+    local current = self._lumenData[userId] or 0
+    local newAmount = current + amount
+    
+    self._lumenData[userId] = newAmount
+    self.Client.LumensChanged:Fire(player, newAmount)
+    self:_updateLeaderstats(player, newAmount) -- <--- ADICIONE AQUI
+    
+    return newAmount
 end
 
 function LumenService:RemoveLumens(player: Player, amount: number): number
-	assert(amount >= 0, "RemoveLumens amount must be non-negative")
-	local userId = player.UserId
-	local current = self._lumenData[userId] or 0
-	local newAmount = math.max(0, current - amount)
-	self._lumenData[userId] = newAmount
-	self.Client.LumensChanged:Fire(player, newAmount)
-	return newAmount
+    assert(amount >= 0, "RemoveLumens amount must be non-negative")
+    local userId = player.UserId
+    local current = self._lumenData[userId] or 0
+    local newAmount = math.max(0, current - amount)
+    
+    self._lumenData[userId] = newAmount
+    self.Client.LumensChanged:Fire(player, newAmount)
+    self:_updateLeaderstats(player, newAmount) -- <--- ADICIONE AQUI
+    
+    return newAmount
 end
 
 function LumenService:GetLumens(player: Player): number
@@ -53,7 +59,14 @@ function LumenService:GetLumens(player: Player): number
 end
 
 function LumenService.Client:GetLumens(player: Player): number
-	return self.Server:GetLumens(player)
+    -- Espera os dados do jogador carregarem antes de responder ao cliente
+    while not self.Server._dataLoaded[player.UserId] do
+        -- Se o jogador sair do jogo enquanto carrega, cancela e retorna 0
+        if not player:IsDescendantOf(game) then return 0 end
+        task.wait(0.1)
+    end
+    
+    return self.Server:GetLumens(player)
 end
 
 function LumenService:_loadPlayerData(player: Player)
@@ -85,13 +98,23 @@ function LumenService:_loadPlayerData(player: Player)
 	self._lumenData[userId] = lumens
 	self._dataLoaded[userId] = true
 
-	self.Client.LumensChanged:Fire(player, lumens)
+	local leaderstats = Instance.new("Folder")
+    leaderstats.Name = "leaderstats" -- O nome TEM que ser esse, em minúsculo
+    leaderstats.Parent = player
 
-	-- Grant de teste para o dono
-	if player.Name == TEST_PLAYER then
-		self:AddLumens(player, TEST_GRANT)
-		print(string.format("[LumenService] Granted %d LUM to %s (test)", TEST_GRANT, player.Name))
-	end
+    local lumensValue = Instance.new("IntValue")
+    lumensValue.Name = "LUM" -- Este é o nome que vai aparecer na tabela no topo da tela
+    lumensValue.Value = lumens
+    lumensValue.Parent = leaderstats
+    -- ==========================================
+
+    self.Client.LumensChanged:Fire(player, lumens)
+
+    -- Grant de teste para o dono
+    if player.Name == TEST_PLAYER then
+        self:AddLumens(player, TEST_GRANT)
+        print(string.format("[LumenService] Granted %d LUM to %s (test)", TEST_GRANT, player.Name))
+    end
 end
 
 function LumenService:_savePlayerData(userId: number)
@@ -115,6 +138,17 @@ function LumenService:_saveAllData()
 	for userId in self._lumenData do
 		self:_savePlayerData(userId)
 	end
+end
+
+
+function LumenService:_updateLeaderstats(player: Player, amount: number)
+    local leaderstats = player:FindFirstChild("leaderstats")
+    if leaderstats then
+        local lumensValue = leaderstats:FindFirstChild("LUM")
+        if lumensValue then
+            lumensValue.Value = amount
+        end
+    end
 end
 
 function LumenService:KnitInit()
