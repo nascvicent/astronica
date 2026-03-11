@@ -10,7 +10,9 @@
       "Bash(git commit:*)",
       "Bash(git push -u origin feature/lumen-currency)",
       "Bash(gh pr:*)",
-      "Bash(\"/c/Program Files/GitHub:*)"
+      "Bash(\"/c/Program Files/GitHub:*)",
+      "Bash(rojo --version)",
+      "Bash(rojo sourcemap default.project.json)"
     ]
   }
 }

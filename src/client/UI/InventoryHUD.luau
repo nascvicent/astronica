@@ -1,7 +1,7 @@
 --[[
 	InventoryHUD
-	UI 3D holográfica usando SurfaceGui em Parts que seguem a câmera.
-	Quick bar (3 slots, bottom-right) + Full inventory (grid 5x4, toggle com slide-in).
+	Quick bar: 3D holográfica (SurfaceGui em Part que segue a câmera).
+	Full inventory: 2D ScreenGui tela inteira (usa "InventoryGui" pré-existente).
 ]]
 
 local RunService = game:GetService("RunService")
@@ -17,22 +17,15 @@ local playerGui = player:WaitForChild("PlayerGui")
 -- ═══════════════════════════════════════════════════════════
 
 local PPS = 512
-local LERP_SPEED = 12
 local BASE_ASPECT = 16 / 9
 
 -- Quick bar (3 slots, bottom-right, ângulo holográfico)
 local QB_PART_SIZE = Vector3.new(1.6, 0.45, 0.01)
-local QB_OFFSET = Vector3.new(2.0, -1.3, -4)
+local QB_OFFSET = Vector3.new(2.45, -1.3, -4)
 local QB_ROT_Y = -15
 local QB_SLOT_COUNT = 3
 
--- Full inventory (grid central, slide-in da direita)
-local FULL_PART_SIZE = Vector3.new(2.8, 3.0, 0.01)
-local FULL_OFFSET_Y = 0.2
-local FULL_OFFSET_Z = -3.5
-local FULL_OPEN_X = 0
-local FULL_CLOSED_X = 6
-local FULL_ROT_Y = -8
+-- Full inventory (grid 2D)
 local FULL_COLS = 5
 local FULL_ROWS = 4
 
@@ -84,33 +77,33 @@ function InventoryHUD.new()
 	self._folder.Name = "InventoryHUD"
 	self._folder.Parent = workspace
 
-	-- Quick bar
+	-- Quick bar (3D)
 	self._qbPart, self._qbGui = self:_createSurfacePart("QuickBar", QB_PART_SIZE)
 	self._qbSlots = {}
 	self:_buildQuickBar()
 
-	-- Full inventory
-	self._fullPart, self._fullGui = self:_createSurfacePart("FullInv", FULL_PART_SIZE)
+	-- Full inventory (2D ScreenGui)
+	self._fullGui = playerGui:WaitForChild("InventoryGui")
+	self._fullGui.Enabled = false
 	self._fullSlots = {}
 	self:_buildFullInventory()
 
+	-- Toggle button (ScreenGui lateral)
+	self:_buildToggleButton()
+
 	-- State
 	self._isOpen = false
-	local cam = workspace.CurrentCamera
-	local cf = cam and cam.CFrame or CFrame.new()
-	self._qbCF = cf * CFrame.new(QB_OFFSET.X, QB_OFFSET.Y, QB_OFFSET.Z)
-	self._fullCF = cf * CFrame.new(FULL_CLOSED_X, FULL_OFFSET_Y, FULL_OFFSET_Z)
 
-	-- Render loop
-	self._renderConn = RunService.RenderStepped:Connect(function(dt)
-		self:_onRender(dt)
+	-- Render loop (só quick bar 3D)
+	self._renderConn = RunService.RenderStepped:Connect(function()
+		self:_onRender()
 	end)
 
 	return self
 end
 
 -- ═══════════════════════════════════════════════════════════
--- Part + SurfaceGui factory
+-- Part + SurfaceGui factory (só para quick bar)
 -- ═══════════════════════════════════════════════════════════
 
 function InventoryHUD:_createSurfacePart(name: string, size: Vector3)
@@ -213,6 +206,72 @@ function InventoryHUD:_createSlotFrame(parent: Instance, showName: boolean)
 end
 
 -- ═══════════════════════════════════════════════════════════
+-- Toggle button (ScreenGui lateral)
+-- ═══════════════════════════════════════════════════════════
+
+function InventoryHUD:_buildToggleButton()
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "InventoryToggle"
+	screenGui.ResetOnSpawn = false
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screenGui.Parent = playerGui
+	self._toggleGui = screenGui
+
+	-- Botão lateral direito
+	local btn = Instance.new("TextButton")
+	btn.Name = "ToggleBtn"
+	btn.Size = UDim2.new(0, 44, 0, 44)
+	btn.Position = UDim2.new(1, -56, 0.5, -22)
+	btn.BackgroundColor3 = C.panelBg
+	btn.BackgroundTransparency = 0.15
+	btn.Text = ""
+	btn.AutoButtonColor = false
+	btn.Parent = screenGui
+
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 10)
+	btnCorner.Parent = btn
+
+	local btnStroke = Instance.new("UIStroke")
+	btnStroke.Color = C.title
+	btnStroke.Thickness = 1.5
+	btnStroke.Transparency = 0.4
+	btnStroke.Parent = btn
+	self._btnStroke = btnStroke
+
+	-- Ícone
+	local icon = Instance.new("TextLabel")
+	icon.Name = "Icon"
+	icon.Size = UDim2.new(1, 0, 1, 0)
+	icon.BackgroundTransparency = 1
+	icon.Text = "\u{1F4E6}"
+	icon.TextColor3 = C.title
+	icon.TextScaled = true
+	icon.Font = Enum.Font.GothamBold
+	icon.Parent = btn
+
+	self._toggleBtn = btn
+	self._toggleIcon = icon
+
+	-- Hover effect
+	btn.MouseEnter:Connect(function()
+		btnStroke.Transparency = 0
+		btn.BackgroundTransparency = 0.05
+	end)
+
+	btn.MouseLeave:Connect(function()
+		local t = if self._isOpen then 0.1 else 0.4
+		btnStroke.Transparency = t
+		btn.BackgroundTransparency = 0.15
+	end)
+
+	-- Click toggle
+	btn.Activated:Connect(function()
+		self:Toggle()
+	end)
+end
+
+-- ═══════════════════════════════════════════════════════════
 -- Build UI layouts
 -- ═══════════════════════════════════════════════════════════
 
@@ -244,15 +303,25 @@ function InventoryHUD:_buildQuickBar()
 end
 
 function InventoryHUD:_buildFullInventory()
-	-- Painel de fundo
+	-- Fundo escuro tela inteira
+	local bg = Instance.new("Frame")
+	bg.Name = "Background"
+	bg.Size = UDim2.new(1, 0, 1, 0)
+	bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	bg.BackgroundTransparency = 0.4
+	bg.BorderSizePixel = 0
+	bg.Parent = self._fullGui
+
+	-- Painel central
 	local panel = Instance.new("Frame")
 	panel.Name = "Panel"
-	panel.Size = UDim2.new(0.95, 0, 0.96, 0)
-	panel.Position = UDim2.new(0.025, 0, 0.02, 0)
+	panel.Size = UDim2.new(0.5, 0, 0.7, 0)
+	panel.Position = UDim2.new(0.25, 0, 0.15, 0)
 	panel.BackgroundColor3 = C.panelBg
-	panel.BackgroundTransparency = 0.12
+	panel.BackgroundTransparency = 0.05
 	panel.BorderSizePixel = 0
-	panel.Parent = self._fullGui
+	panel.Parent = bg
+	self._fullPanel = panel
 
 	local panelCorner = Instance.new("UICorner")
 	panelCorner.CornerRadius = UDim.new(0, 12)
@@ -261,13 +330,13 @@ function InventoryHUD:_buildFullInventory()
 	local panelStroke = Instance.new("UIStroke")
 	panelStroke.Color = C.title
 	panelStroke.Thickness = 1.5
-	panelStroke.Transparency = 0.5
+	panelStroke.Transparency = 0.3
 	panelStroke.Parent = panel
 
 	-- Título
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
-	title.Size = UDim2.new(1, 0, 0.06, 0)
+	title.Size = UDim2.new(1, 0, 0.07, 0)
 	title.Position = UDim2.new(0, 0, 0.02, 0)
 	title.BackgroundTransparency = 1
 	title.Text = "INVENTORY"
@@ -276,11 +345,27 @@ function InventoryHUD:_buildFullInventory()
 	title.Font = Enum.Font.GothamBold
 	title.Parent = panel
 
+	-- Botão fechar (X)
+	local closeBtn = Instance.new("TextButton")
+	closeBtn.Name = "CloseBtn"
+	closeBtn.Size = UDim2.new(0, 32, 0, 32)
+	closeBtn.Position = UDim2.new(1, -40, 0, 8)
+	closeBtn.BackgroundTransparency = 1
+	closeBtn.Text = "X"
+	closeBtn.TextColor3 = C.textDim
+	closeBtn.TextScaled = true
+	closeBtn.Font = Enum.Font.GothamBold
+	closeBtn.Parent = panel
+
+	closeBtn.Activated:Connect(function()
+		self:Toggle()
+	end)
+
 	-- Container da grid
 	local gridContainer = Instance.new("Frame")
 	gridContainer.Name = "Grid"
-	gridContainer.Size = UDim2.new(0.92, 0, 0.85, 0)
-	gridContainer.Position = UDim2.new(0.04, 0, 0.1, 0)
+	gridContainer.Size = UDim2.new(0.92, 0, 0.82, 0)
+	gridContainer.Position = UDim2.new(0.04, 0, 0.12, 0)
 	gridContainer.BackgroundTransparency = 1
 	gridContainer.Parent = panel
 
@@ -366,6 +451,17 @@ end
 
 function InventoryHUD:Toggle()
 	self._isOpen = not self._isOpen
+
+	-- Mostra/esconde a ScreenGui do inventário
+	self._fullGui.Enabled = self._isOpen
+
+	-- Atualiza visual do botão
+	if self._btnStroke then
+		self._btnStroke.Transparency = if self._isOpen then 0.1 else 0.4
+	end
+	if self._toggleIcon then
+		self._toggleIcon.TextColor3 = if self._isOpen then C.consumable else C.title
+	end
 end
 
 function InventoryHUD:IsOpen(): boolean
@@ -373,35 +469,19 @@ function InventoryHUD:IsOpen(): boolean
 end
 
 -- ═══════════════════════════════════════════════════════════
--- Camera follow (RenderStepped)
+-- Camera follow (só quick bar 3D)
 -- ═══════════════════════════════════════════════════════════
 
-function InventoryHUD:_onRender(dt: number)
+function InventoryHUD:_onRender()
 	local cam = workspace.CurrentCamera
 	if not cam then return end
 
-	local alpha = math.min(1, dt * LERP_SPEED)
-
-	-- Compensação de aspect ratio
 	local vp = cam.ViewportSize
 	local aspectScale = (vp.X / vp.Y) / BASE_ASPECT
 
-	-- Quick bar
-	local qbTarget = cam.CFrame
+	self._qbPart.CFrame = cam.CFrame
 		* CFrame.new(QB_OFFSET.X * aspectScale, QB_OFFSET.Y, QB_OFFSET.Z)
 		* CFrame.Angles(0, math.rad(QB_ROT_Y), 0)
-
-	self._qbCF = self._qbCF:Lerp(qbTarget, alpha)
-	self._qbPart.CFrame = self._qbCF
-
-	-- Full inventory (slide entre open/closed)
-	local fullX = if self._isOpen then FULL_OPEN_X else FULL_CLOSED_X
-	local fullTarget = cam.CFrame
-		* CFrame.new(fullX * aspectScale, FULL_OFFSET_Y, FULL_OFFSET_Z)
-		* CFrame.Angles(0, math.rad(FULL_ROT_Y), 0)
-
-	self._fullCF = self._fullCF:Lerp(fullTarget, alpha)
-	self._fullPart.CFrame = self._fullCF
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -416,8 +496,12 @@ function InventoryHUD:Destroy()
 	if self._qbGui then
 		self._qbGui:Destroy()
 	end
+	-- InventoryGui é pré-existente, só esconde
 	if self._fullGui then
-		self._fullGui:Destroy()
+		self._fullGui.Enabled = false
+	end
+	if self._toggleGui then
+		self._toggleGui:Destroy()
 	end
 	if self._folder then
 		self._folder:Destroy()

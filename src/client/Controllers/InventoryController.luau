@@ -1,9 +1,6 @@
 local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit)
-local UserInputService = game:GetService("UserInputService")
 
 local InventoryHUD = require(script.Parent.Parent.UI.InventoryHUD)
-
-local TOGGLE_KEY = Enum.KeyCode.I
 
 local InventoryController = Knit.CreateController({
 	Name = "InventoryController",
@@ -36,14 +33,6 @@ function InventoryController:KnitStart()
 		self._hud:UpdateAll(data)
 	end):catch(function(err)
 		warn("[InventoryController] Failed to get initial inventory:", err)
-	end)
-
-	-- Toggle inventário completo com tecla I
-	UserInputService.InputBegan:Connect(function(input, processed)
-		if processed then return end
-		if input.KeyCode == TOGGLE_KEY then
-			self._hud:Toggle()
-		end
 	end)
 end
 
