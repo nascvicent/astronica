@@ -17,17 +17,21 @@ local playerGui = player:WaitForChild("PlayerGui")
 -- ═══════════════════════════════════════════════════════════
 
 local PPS = 512
-local BASE_ASPECT = 16 / 9
 
 -- Quick bar (3 slots, bottom-right, ângulo holográfico)
 local QB_PART_SIZE = Vector3.new(1.6, 0.45, 0.01)
-local QB_OFFSET = Vector3.new(2.45, -1.3, -4)
+local QB_DEPTH = 4          -- distância Z da câmera
+local QB_SCREEN_X = 0.70    -- posição normalizada (1 = borda direita)
+local QB_SCREEN_Y = 0.72    -- posição normalizada (positivo = baixo)
 local QB_ROT_Y = -15
 local QB_SLOT_COUNT = 3
 
 -- Full inventory (grid 2D)
-local FULL_COLS = 5
-local FULL_ROWS = 4
+local FULL_COLS = 6
+local FULL_ROWS = 6
+
+-- Tabs
+local TABS = { "Itens", "Traje", "Nave" }
 
 -- Cores (tema sci-fi / holográfico)
 local C = {
@@ -86,6 +90,8 @@ function InventoryHUD.new()
 	self._fullGui = playerGui:WaitForChild("InventoryGui")
 	self._fullGui.Enabled = false
 	self._fullSlots = {}
+	self._activeTab = 1
+	self._tabButtons = {}
 	self:_buildFullInventory()
 
 	-- Toggle button (ScreenGui lateral)
@@ -308,81 +314,299 @@ function InventoryHUD:_buildFullInventory()
 	bg.Name = "Background"
 	bg.Size = UDim2.new(1, 0, 1, 0)
 	bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	bg.BackgroundTransparency = 0.4
+	bg.BackgroundTransparency = 0.3
 	bg.BorderSizePixel = 0
 	bg.Parent = self._fullGui
 
-	-- Painel central
+	-- Painel tela inteira (estilo NMS, fundo semi-transparente)
 	local panel = Instance.new("Frame")
 	panel.Name = "Panel"
-	panel.Size = UDim2.new(0.5, 0, 0.7, 0)
-	panel.Position = UDim2.new(0.25, 0, 0.15, 0)
+	panel.Size = UDim2.new(1, 0, 1, 0)
+	panel.Position = UDim2.new(0, 0, 0, 0)
 	panel.BackgroundColor3 = C.panelBg
-	panel.BackgroundTransparency = 0.05
+	panel.BackgroundTransparency = 0.15
 	panel.BorderSizePixel = 0
 	panel.Parent = bg
 	self._fullPanel = panel
 
-	local panelCorner = Instance.new("UICorner")
-	panelCorner.CornerRadius = UDim.new(0, 12)
-	panelCorner.Parent = panel
+	-- ══════════════════════════════════════════════
+	-- Header com tabs (Itens | Traje | Nave)
+	-- ══════════════════════════════════════════════
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.Size = UDim2.new(1, 0, 0, 48)
+	header.Position = UDim2.new(0, 0, 0, 0)
+	header.BackgroundColor3 = Color3.fromRGB(10, 15, 30)
+	header.BackgroundTransparency = 0.2
+	header.BorderSizePixel = 0
+	header.Parent = panel
 
-	local panelStroke = Instance.new("UIStroke")
-	panelStroke.Color = C.title
-	panelStroke.Thickness = 1.5
-	panelStroke.Transparency = 0.3
-	panelStroke.Parent = panel
+	local headerCorner = Instance.new("UICorner")
+	headerCorner.CornerRadius = UDim.new(0, 6)
+	headerCorner.Parent = header
 
-	-- Título
-	local title = Instance.new("TextLabel")
-	title.Name = "Title"
-	title.Size = UDim2.new(1, 0, 0.07, 0)
-	title.Position = UDim2.new(0, 0, 0.02, 0)
-	title.BackgroundTransparency = 1
-	title.Text = "INVENTORY"
-	title.TextColor3 = C.title
-	title.TextScaled = true
-	title.Font = Enum.Font.GothamBold
-	title.Parent = panel
+	-- Linha separadora abaixo do header
+	local headerLine = Instance.new("Frame")
+	headerLine.Name = "HeaderLine"
+	headerLine.Size = UDim2.new(1, 0, 0, 1)
+	headerLine.Position = UDim2.new(0, 0, 1, -1)
+	headerLine.BackgroundColor3 = C.title
+	headerLine.BackgroundTransparency = 0.5
+	headerLine.BorderSizePixel = 0
+	headerLine.Parent = header
 
-	-- Botão fechar (X)
+	-- Container dos tabs
+	local tabContainer = Instance.new("Frame")
+	tabContainer.Name = "Tabs"
+	tabContainer.Size = UDim2.new(0.5, 0, 1, 0)
+	tabContainer.Position = UDim2.new(0.25, 0, 0, 0)
+	tabContainer.BackgroundTransparency = 1
+	tabContainer.Parent = header
+
+	local tabLayout = Instance.new("UIListLayout")
+	tabLayout.FillDirection = Enum.FillDirection.Horizontal
+	tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	tabLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	tabLayout.Padding = UDim.new(0, 4)
+	tabLayout.Parent = tabContainer
+
+	for i, tabName in ipairs(TABS) do
+		local tabBtn = Instance.new("TextButton")
+		tabBtn.Name = "Tab_" .. tabName
+		tabBtn.Size = UDim2.new(0, 120, 0, 36)
+		tabBtn.BackgroundColor3 = if i == 1 then Color3.fromRGB(20, 30, 55) else Color3.fromRGB(10, 15, 28)
+		tabBtn.BackgroundTransparency = if i == 1 then 0 else 0.5
+		tabBtn.Text = string.upper(tabName)
+		tabBtn.TextColor3 = if i == 1 then C.title else C.textDim
+		tabBtn.TextScaled = true
+		tabBtn.Font = Enum.Font.GothamBold
+		tabBtn.AutoButtonColor = false
+		tabBtn.BorderSizePixel = 0
+		tabBtn.LayoutOrder = i
+		tabBtn.Parent = tabContainer
+
+		local tabCorner = Instance.new("UICorner")
+		tabCorner.CornerRadius = UDim.new(0, 4)
+		tabCorner.Parent = tabBtn
+
+		-- Indicador ativo (linha inferior)
+		local indicator = Instance.new("Frame")
+		indicator.Name = "Indicator"
+		indicator.Size = UDim2.new(0.8, 0, 0, 2)
+		indicator.Position = UDim2.new(0.1, 0, 1, -3)
+		indicator.BackgroundColor3 = C.title
+		indicator.BorderSizePixel = 0
+		indicator.Visible = (i == 1)
+		indicator.Parent = tabBtn
+
+		local indCorner = Instance.new("UICorner")
+		indCorner.CornerRadius = UDim.new(0, 1)
+		indCorner.Parent = indicator
+
+		local textPadding = Instance.new("UIPadding")
+		textPadding.PaddingTop = UDim.new(0, 4)
+		textPadding.PaddingBottom = UDim.new(0, 6)
+		textPadding.PaddingLeft = UDim.new(0, 8)
+		textPadding.PaddingRight = UDim.new(0, 8)
+		textPadding.Parent = tabBtn
+
+		self._tabButtons[i] = { button = tabBtn, indicator = indicator }
+
+		tabBtn.Activated:Connect(function()
+			self:_selectTab(i)
+		end)
+	end
+
+	-- Botão fechar (X) no canto direito do header
 	local closeBtn = Instance.new("TextButton")
 	closeBtn.Name = "CloseBtn"
-	closeBtn.Size = UDim2.new(0, 32, 0, 32)
-	closeBtn.Position = UDim2.new(1, -40, 0, 8)
+	closeBtn.Size = UDim2.new(0, 36, 0, 36)
+	closeBtn.Position = UDim2.new(1, -44, 0, 6)
 	closeBtn.BackgroundTransparency = 1
 	closeBtn.Text = "X"
 	closeBtn.TextColor3 = C.textDim
 	closeBtn.TextScaled = true
 	closeBtn.Font = Enum.Font.GothamBold
-	closeBtn.Parent = panel
+	closeBtn.Parent = header
 
 	closeBtn.Activated:Connect(function()
 		self:Toggle()
 	end)
 
-	-- Container da grid
-	local gridContainer = Instance.new("Frame")
-	gridContainer.Name = "Grid"
-	gridContainer.Size = UDim2.new(0.92, 0, 0.82, 0)
-	gridContainer.Position = UDim2.new(0.04, 0, 0.12, 0)
-	gridContainer.BackgroundTransparency = 1
-	gridContainer.Parent = panel
+	-- ══════════════════════════════════════════════
+	-- Corpo: Grid (esquerda) + Preview (direita)
+	-- ══════════════════════════════════════════════
+	local body = Instance.new("Frame")
+	body.Name = "Body"
+	body.Size = UDim2.new(1, -32, 1, -64)
+	body.Position = UDim2.new(0, 16, 0, 56)
+	body.BackgroundTransparency = 1
+	body.Parent = panel
+
+	-- ── Grid lado esquerdo ──
+	local gridSection = Instance.new("Frame")
+	gridSection.Name = "GridSection"
+	gridSection.Size = UDim2.new(0.58, 0, 1, 0)
+	gridSection.Position = UDim2.new(0, 0, 0, 0)
+	gridSection.BackgroundColor3 = Color3.fromRGB(8, 12, 26)
+	gridSection.BackgroundTransparency = 0.3
+	gridSection.BorderSizePixel = 0
+	gridSection.Parent = body
+
+	local gridCorner = Instance.new("UICorner")
+	gridCorner.CornerRadius = UDim.new(0, 6)
+	gridCorner.Parent = gridSection
+
+	local gridStroke = Instance.new("UIStroke")
+	gridStroke.Color = Color3.fromRGB(30, 45, 70)
+	gridStroke.Thickness = 1
+	gridStroke.Transparency = 0.4
+	gridStroke.Parent = gridSection
+
+	-- ScrollingFrame para a grid
+	local scrollFrame = Instance.new("ScrollingFrame")
+	scrollFrame.Name = "GridScroll"
+	scrollFrame.Size = UDim2.new(1, -16, 1, -16)
+	scrollFrame.Position = UDim2.new(0, 8, 0, 8)
+	scrollFrame.BackgroundTransparency = 1
+	scrollFrame.BorderSizePixel = 0
+	scrollFrame.ScrollBarThickness = 4
+	scrollFrame.ScrollBarImageColor3 = C.title
+	scrollFrame.ScrollBarImageTransparency = 0.5
+	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0) -- auto-ajustado pelo grid
+	scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scrollFrame.Parent = gridSection
 
 	local grid = Instance.new("UIGridLayout")
-	grid.CellSize = UDim2.new(0.185, 0, 0.23, 0)
-	grid.CellPadding = UDim2.new(0.01, 0, 0.01, 0)
+	grid.CellSize = UDim2.new(0, 72, 0, 82)
+	grid.CellPadding = UDim2.new(0, 6, 0, 6)
 	grid.FillDirection = Enum.FillDirection.Horizontal
-	grid.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	grid.HorizontalAlignment = Enum.HorizontalAlignment.Left
 	grid.VerticalAlignment = Enum.VerticalAlignment.Top
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
-	grid.Parent = gridContainer
+	grid.Parent = scrollFrame
+	self._gridLayout = grid
 
 	for i = 1, FULL_COLS * FULL_ROWS do
-		local slot = self:_createSlotFrame(gridContainer, true)
+		local slot = self:_createSlotFrame(scrollFrame, true)
 		slot.frame.LayoutOrder = i
 		self._fullSlots[i] = slot
 	end
+
+	-- ── Preview lado direito ──
+	local previewSection = Instance.new("Frame")
+	previewSection.Name = "PreviewSection"
+	previewSection.Size = UDim2.new(0.38, 0, 1, 0)
+	previewSection.Position = UDim2.new(0.62, 0, 0, 0)
+	previewSection.BackgroundColor3 = Color3.fromRGB(8, 12, 26)
+	previewSection.BackgroundTransparency = 0.3
+	previewSection.BorderSizePixel = 0
+	previewSection.Parent = body
+
+	local prevCorner = Instance.new("UICorner")
+	prevCorner.CornerRadius = UDim.new(0, 6)
+	prevCorner.Parent = previewSection
+
+	local prevStroke = Instance.new("UIStroke")
+	prevStroke.Color = Color3.fromRGB(30, 45, 70)
+	prevStroke.Thickness = 1
+	prevStroke.Transparency = 0.4
+	prevStroke.Parent = previewSection
+
+	-- Título "Equipment" / preview
+	local prevTitle = Instance.new("TextLabel")
+	prevTitle.Name = "PreviewTitle"
+	prevTitle.Size = UDim2.new(1, -16, 0, 28)
+	prevTitle.Position = UDim2.new(0, 8, 0, 8)
+	prevTitle.BackgroundTransparency = 1
+	prevTitle.Text = "EQUIPMENT"
+	prevTitle.TextColor3 = C.title
+	prevTitle.TextScaled = true
+	prevTitle.Font = Enum.Font.GothamBold
+	prevTitle.TextXAlignment = Enum.TextXAlignment.Left
+	prevTitle.Parent = previewSection
+
+	-- Frame reservado para ViewportFrame (preview 3D do item)
+	local viewportHolder = Instance.new("Frame")
+	viewportHolder.Name = "ViewportHolder"
+	viewportHolder.Size = UDim2.new(0.9, 0, 0.5, 0)
+	viewportHolder.Position = UDim2.new(0.05, 0, 0.08, 0)
+	viewportHolder.BackgroundColor3 = Color3.fromRGB(4, 6, 16)
+	viewportHolder.BackgroundTransparency = 0.2
+	viewportHolder.BorderSizePixel = 0
+	viewportHolder.Parent = previewSection
+	self._viewportHolder = viewportHolder
+
+	local vpCorner = Instance.new("UICorner")
+	vpCorner.CornerRadius = UDim.new(0, 6)
+	vpCorner.Parent = viewportHolder
+
+	local vpStroke = Instance.new("UIStroke")
+	vpStroke.Color = Color3.fromRGB(25, 40, 65)
+	vpStroke.Thickness = 1
+	vpStroke.Transparency = 0.5
+	vpStroke.Parent = viewportHolder
+
+	-- Placeholder text (remover quando adicionar ViewportFrame)
+	local vpPlaceholder = Instance.new("TextLabel")
+	vpPlaceholder.Name = "Placeholder"
+	vpPlaceholder.Size = UDim2.new(1, 0, 1, 0)
+	vpPlaceholder.BackgroundTransparency = 1
+	vpPlaceholder.Text = "3D PREVIEW"
+	vpPlaceholder.TextColor3 = Color3.fromRGB(30, 45, 70)
+	vpPlaceholder.TextScaled = true
+	vpPlaceholder.Font = Enum.Font.GothamBold
+	vpPlaceholder.Parent = viewportHolder
+
+	-- Info do item selecionado (abaixo do viewport)
+	local itemInfo = Instance.new("Frame")
+	itemInfo.Name = "ItemInfo"
+	itemInfo.Size = UDim2.new(0.9, 0, 0.35, 0)
+	itemInfo.Position = UDim2.new(0.05, 0, 0.6, 0)
+	itemInfo.BackgroundTransparency = 1
+	itemInfo.Parent = previewSection
+	self._itemInfoFrame = itemInfo
+
+	local itemName = Instance.new("TextLabel")
+	itemName.Name = "ItemName"
+	itemName.Size = UDim2.new(1, 0, 0, 28)
+	itemName.Position = UDim2.new(0, 0, 0, 0)
+	itemName.BackgroundTransparency = 1
+	itemName.Text = ""
+	itemName.TextColor3 = C.quantity
+	itemName.TextScaled = true
+	itemName.Font = Enum.Font.GothamBold
+	itemName.TextXAlignment = Enum.TextXAlignment.Left
+	itemName.Parent = itemInfo
+	self._previewItemName = itemName
+
+	local itemDesc = Instance.new("TextLabel")
+	itemDesc.Name = "ItemDesc"
+	itemDesc.Size = UDim2.new(1, 0, 0, 40)
+	itemDesc.Position = UDim2.new(0, 0, 0, 32)
+	itemDesc.BackgroundTransparency = 1
+	itemDesc.Text = ""
+	itemDesc.TextColor3 = C.textDim
+	itemDesc.TextScaled = true
+	itemDesc.Font = Enum.Font.Gotham
+	itemDesc.TextXAlignment = Enum.TextXAlignment.Left
+	itemDesc.TextYAlignment = Enum.TextYAlignment.Top
+	itemDesc.TextWrapped = true
+	itemDesc.Parent = itemInfo
+	self._previewItemDesc = itemDesc
+
+	local itemQty = Instance.new("TextLabel")
+	itemQty.Name = "ItemQty"
+	itemQty.Size = UDim2.new(1, 0, 0, 24)
+	itemQty.Position = UDim2.new(0, 0, 0, 76)
+	itemQty.BackgroundTransparency = 1
+	itemQty.Text = ""
+	itemQty.TextColor3 = C.resource
+	itemQty.TextScaled = true
+	itemQty.Font = Enum.Font.GothamBold
+	itemQty.TextXAlignment = Enum.TextXAlignment.Left
+	itemQty.Parent = itemInfo
+	self._previewItemQty = itemQty
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -424,6 +648,24 @@ function InventoryHUD:_renderSlot(slotUI, slotData)
 	if slotUI.nameLabel then
 		slotUI.nameLabel.Text = def.name
 	end
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- Tab selection
+-- ═══════════════════════════════════════════════════════════
+
+function InventoryHUD:_selectTab(index: number)
+	self._activeTab = index
+
+	for i, tab in ipairs(self._tabButtons) do
+		local isActive = (i == index)
+		tab.button.BackgroundColor3 = if isActive then Color3.fromRGB(20, 30, 55) else Color3.fromRGB(10, 15, 28)
+		tab.button.BackgroundTransparency = if isActive then 0 else 0.5
+		tab.button.TextColor3 = if isActive then C.title else C.textDim
+		tab.indicator.Visible = isActive
+	end
+
+	-- TODO: filtrar conteúdo da grid por tab (Itens/Traje/Nave)
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -476,11 +718,16 @@ function InventoryHUD:_onRender()
 	local cam = workspace.CurrentCamera
 	if not cam then return end
 
-	local vp = cam.ViewportSize
-	local aspectScale = (vp.X / vp.Y) / BASE_ASPECT
+	-- Calcula tamanho visível no mundo à distância QB_DEPTH usando FOV
+	local fovRad = math.rad(cam.FieldOfView)
+	local halfH = QB_DEPTH * math.tan(fovRad / 2)
+	local halfW = halfH * (cam.ViewportSize.X / cam.ViewportSize.Y)
+
+	local worldX = halfW * QB_SCREEN_X
+	local worldY = halfH * -QB_SCREEN_Y -- Y negativo no mundo = baixo da tela
 
 	self._qbPart.CFrame = cam.CFrame
-		* CFrame.new(QB_OFFSET.X * aspectScale, QB_OFFSET.Y, QB_OFFSET.Z)
+		* CFrame.new(worldX, worldY, -QB_DEPTH)
 		* CFrame.Angles(0, math.rad(QB_ROT_Y), 0)
 end
 
