@@ -5,6 +5,7 @@
 ]]
 
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 
 local InventoryModule = require(game:GetService("ReplicatedStorage").Shared.InventoryModule)
@@ -21,10 +22,15 @@ local PPS = 512
 -- Quick bar (3 slots, bottom-right, ângulo holográfico)
 local QB_PART_SIZE = Vector3.new(1.6, 0.45, 0.01)
 local QB_DEPTH = 4          -- distância Z da câmera
-local QB_SCREEN_X = 0.70    -- posição normalizada (1 = borda direita)
-local QB_SCREEN_Y = 0.72    -- posição normalizada (positivo = baixo)
+local QB_SCREEN_X = 0.62    -- compensado para centralizar conjunto (quick bar + icon) simétrico ao health (-0.70)
+local QB_SCREEN_Y = 0.78    -- mesma altura do health
 local QB_ROT_Y = -15
 local QB_SLOT_COUNT = 3
+
+-- Toggle button (3D, à esquerda da quick bar)
+local TB_PART_SIZE = Vector3.new(0.35, 0.35, 0.01)
+local TB_OFFSET_X = 0.95    -- offset horizontal em relação à quick bar (positivo = direita)
+local TB_OFFSET_Y = -0.13   -- offset vertical (negativo = para baixo)
 
 -- Full inventory (grid 2D)
 local FULL_COLS = 6
@@ -94,7 +100,8 @@ function InventoryHUD.new()
 	self._tabButtons = {}
 	self:_buildFullInventory()
 
-	-- Toggle button (ScreenGui lateral)
+	-- Toggle button (3D, ao lado da quick bar)
+	self._tbPart, self._tbGui = self:_createSurfacePart("ToggleBtn", TB_PART_SIZE)
 	self:_buildToggleButton()
 
 	-- State
@@ -216,44 +223,43 @@ end
 -- ═══════════════════════════════════════════════════════════
 
 function InventoryHUD:_buildToggleButton()
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "InventoryToggle"
-	screenGui.ResetOnSpawn = false
-	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	screenGui.Parent = playerGui
-	self._toggleGui = screenGui
+	local container = Instance.new("Frame")
+	container.Name = "Container"
+	container.Size = UDim2.new(1, 0, 1, 0)
+	container.BackgroundTransparency = 1
+	container.Parent = self._tbGui
 
-	-- Botão lateral direito
+	-- Botão 3D holográfico
 	local btn = Instance.new("TextButton")
 	btn.Name = "ToggleBtn"
-	btn.Size = UDim2.new(0, 44, 0, 44)
-	btn.Position = UDim2.new(1, -56, 0.5, -22)
-	btn.BackgroundColor3 = C.panelBg
-	btn.BackgroundTransparency = 0.15
+	btn.Size = UDim2.new(0.85, 0, 0.85, 0)
+	btn.Position = UDim2.new(0.075, 0, 0.075, 0)
+	btn.BackgroundColor3 = C.slotBg
+	btn.BackgroundTransparency = 0.4
 	btn.Text = ""
 	btn.AutoButtonColor = false
-	btn.Parent = screenGui
+	btn.Parent = container
 
 	local btnCorner = Instance.new("UICorner")
-	btnCorner.CornerRadius = UDim.new(0, 10)
+	btnCorner.CornerRadius = UDim.new(0, 8)
 	btnCorner.Parent = btn
 
 	local btnStroke = Instance.new("UIStroke")
 	btnStroke.Color = C.title
-	btnStroke.Thickness = 1.5
+	btnStroke.Thickness = 2
 	btnStroke.Transparency = 0.4
 	btnStroke.Parent = btn
 	self._btnStroke = btnStroke
 
 	-- Ícone
-	local icon = Instance.new("TextLabel")
+	local icon = Instance.new("ImageLabel")
 	icon.Name = "Icon"
-	icon.Size = UDim2.new(1, 0, 1, 0)
+	icon.Size = UDim2.new(0.7, 0, 0.7, 0)
+	icon.Position = UDim2.new(0.15, 0, 0.15, 0)
 	icon.BackgroundTransparency = 1
-	icon.Text = "\u{1F4E6}"
-	icon.TextColor3 = C.title
-	icon.TextScaled = true
-	icon.Font = Enum.Font.GothamBold
+	icon.Image = "rbxassetid://96507897375758"
+	icon.ImageColor3 = C.title
+	icon.ScaleType = Enum.ScaleType.Fit
 	icon.Parent = btn
 
 	self._toggleBtn = btn
@@ -262,13 +268,13 @@ function InventoryHUD:_buildToggleButton()
 	-- Hover effect
 	btn.MouseEnter:Connect(function()
 		btnStroke.Transparency = 0
-		btn.BackgroundTransparency = 0.05
+		btn.BackgroundTransparency = 0.15
 	end)
 
 	btn.MouseLeave:Connect(function()
 		local t = if self._isOpen then 0.1 else 0.4
 		btnStroke.Transparency = t
-		btn.BackgroundTransparency = 0.15
+		btn.BackgroundTransparency = 0.4
 	end)
 
 	-- Click toggle
@@ -309,20 +315,22 @@ function InventoryHUD:_buildQuickBar()
 end
 
 function InventoryHUD:_buildFullInventory()
-	-- Fundo escuro tela inteira
+	-- Fundo escuro tela inteira (overlay)
 	local bg = Instance.new("Frame")
 	bg.Name = "Background"
 	bg.Size = UDim2.new(1, 0, 1, 0)
 	bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	bg.BackgroundTransparency = 0.3
+	bg.BackgroundTransparency = 1          -- começa invisível
 	bg.BorderSizePixel = 0
+	bg.ClipsDescendants = true
 	bg.Parent = self._fullGui
+	self._fullBg = bg
 
-	-- Painel tela inteira (estilo NMS, fundo semi-transparente)
+	-- Painel principal — começa fora da tela (à direita)
 	local panel = Instance.new("Frame")
 	panel.Name = "Panel"
 	panel.Size = UDim2.new(1, 0, 1, 0)
-	panel.Position = UDim2.new(0, 0, 0, 0)
+	panel.Position = UDim2.new(1, 0, 0, 0)   -- fora da tela (direita)
 	panel.BackgroundColor3 = C.panelBg
 	panel.BackgroundTransparency = 0.15
 	panel.BorderSizePixel = 0
@@ -691,18 +699,56 @@ function InventoryHUD:UpdateAll(inventory)
 	end
 end
 
+local TWEEN_OPEN  = TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+local TWEEN_CLOSE = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+
 function InventoryHUD:Toggle()
 	self._isOpen = not self._isOpen
-
-	-- Mostra/esconde a ScreenGui do inventário
-	self._fullGui.Enabled = self._isOpen
 
 	-- Atualiza visual do botão
 	if self._btnStroke then
 		self._btnStroke.Transparency = if self._isOpen then 0.1 else 0.4
 	end
 	if self._toggleIcon then
-		self._toggleIcon.TextColor3 = if self._isOpen then C.consumable else C.title
+		self._toggleIcon.ImageColor3 = if self._isOpen then C.consumable else C.title
+	end
+
+	if self._isOpen then
+		-- ── ABRIR ──────────────────────────────────
+		self._fullGui.Enabled = true
+
+		-- Reseta posições antes de animar
+		self._fullBg.BackgroundTransparency = 1
+		self._fullPanel.Position = UDim2.new(1, 0, 0, 0)
+
+		-- Fundo escurece suavemente
+		TweenService:Create(self._fullBg, TWEEN_OPEN, {
+			BackgroundTransparency = 0.3,
+		}):Play()
+
+		-- Painel desliza da direita para o centro
+		TweenService:Create(self._fullPanel, TWEEN_OPEN, {
+			Position = UDim2.new(0, 0, 0, 0),
+		}):Play()
+	else
+		-- ── FECHAR ─────────────────────────────────
+		-- Fundo clareia
+		TweenService:Create(self._fullBg, TWEEN_CLOSE, {
+			BackgroundTransparency = 1,
+		}):Play()
+
+		-- Painel desliza para a direita
+		local slideTween = TweenService:Create(self._fullPanel, TWEEN_CLOSE, {
+			Position = UDim2.new(1, 0, 0, 0),
+		})
+		slideTween:Play()
+
+		-- Desabilita a GUI só depois da animação acabar
+		slideTween.Completed:Once(function()
+			if not self._isOpen then
+				self._fullGui.Enabled = false
+			end
+		end)
 	end
 end
 
@@ -729,6 +775,12 @@ function InventoryHUD:_onRender()
 	self._qbPart.CFrame = cam.CFrame
 		* CFrame.new(worldX, worldY, -QB_DEPTH)
 		* CFrame.Angles(0, math.rad(QB_ROT_Y), 0)
+
+	-- Toggle button ao lado da quick bar (compensa diferença de altura dos parts)
+	local tbYOffset = (QB_PART_SIZE.Y - TB_PART_SIZE.Y) / 2 + TB_OFFSET_Y
+	self._tbPart.CFrame = cam.CFrame
+		* CFrame.new(worldX + TB_OFFSET_X, worldY + tbYOffset, -QB_DEPTH)
+		* CFrame.Angles(0, math.rad(QB_ROT_Y), 0)
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -747,8 +799,8 @@ function InventoryHUD:Destroy()
 	if self._fullGui then
 		self._fullGui.Enabled = false
 	end
-	if self._toggleGui then
-		self._toggleGui:Destroy()
+	if self._tbGui then
+		self._tbGui:Destroy()
 	end
 	if self._folder then
 		self._folder:Destroy()
