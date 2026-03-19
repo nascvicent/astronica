@@ -12,7 +12,8 @@
       "Bash(gh pr:*)",
       "Bash(\"/c/Program Files/GitHub:*)",
       "Bash(rojo --version)",
-      "Bash(rojo sourcemap default.project.json)"
+      "Bash(rojo sourcemap default.project.json)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

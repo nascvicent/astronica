@@ -10,18 +10,18 @@ HealthHUD.__index = HealthHUD
 
 -- 3D config (same system as InventoryHUD)
 local PPS = 512
-local BASE_ASPECT = 16 / 9
 
--- Part size and camera offset (bottom-right, below quick bar)
--- Novo (Left)
-local PART_SIZE = Vector3.new(1.2, 0.18, 0.01)
-local OFFSET = Vector3.new(-2.45, -1.65, -4) -- X negativo move para a esquerda
-local ROT_Y = 15 -- Invertendo a rotação para apontar para o centro
+-- Part size and screen-normalized position
+local PART_SIZE = Vector3.new(1.2, 0.45, 0.01)
+local DEPTH = 4          -- distância Z da câmera
+local SCREEN_X = -0.70   -- posição normalizada (-1 = borda esquerda, 1 = borda direita)
+local SCREEN_Y = 0.82    -- posição normalizada (positivo = baixo)
+local ROT_Y = 15
 
 -- Layout (proportional)
-local ICON_SCALE = 0.85  -- 85% da altura do container
-local BAR_X_START = 0.18 -- onde a barra começa (após o ícone)
-local BAR_HEIGHT = 0.35  -- altura da barra relativa ao container
+local ICON_SCALE = 0.85
+local BAR_X_START = 0.28 -- onde a barra começa (gap maior do ícone)
+local BAR_HEIGHT = 0.18
 
 -- Colors
 local BAR_BG_COLOR = Color3.fromRGB(30, 34, 50)
@@ -124,11 +124,16 @@ function HealthHUD:_onRender()
 	local cam = workspace.CurrentCamera
 	if not cam then return end
 
-	local vp = cam.ViewportSize
-	local aspectScale = (vp.X / vp.Y) / BASE_ASPECT
+	-- Calcula tamanho visível no mundo à distância DEPTH usando FOV
+	local fovRad = math.rad(cam.FieldOfView)
+	local halfH = DEPTH * math.tan(fovRad / 2)
+	local halfW = halfH * (cam.ViewportSize.X / cam.ViewportSize.Y)
+
+	local worldX = halfW * SCREEN_X
+	local worldY = halfH * -SCREEN_Y -- Y negativo no mundo = baixo da tela
 
 	self._part.CFrame = cam.CFrame
-		* CFrame.new(OFFSET.X * aspectScale, OFFSET.Y, OFFSET.Z)
+		* CFrame.new(worldX, worldY, -DEPTH)
 		* CFrame.Angles(0, math.rad(ROT_Y), 0)
 end
 
@@ -146,6 +151,25 @@ function HealthHUD:Update(health: number, maxHealth: number)
 		Size = UDim2.new(ratio, 0, 1, 0),
 		BackgroundColor3 = targetColor,
 	}):Play()
+end
+
+function HealthHUD:SetVisible(show: boolean)
+	print(string.format("[HealthHUD] SetVisible called — show: %s", tostring(show)))
+	print(string.format("[HealthHUD] _gui exists: %s, _folder exists: %s", tostring(self._gui ~= nil), tostring(self._folder ~= nil)))
+
+	if self._gui then
+		self._gui.Enabled = show
+		print(string.format("[HealthHUD] gui.Enabled set to %s", tostring(show)))
+	else
+		print("[HealthHUD] WARNING: _gui is nil!")
+	end
+
+	if self._folder then
+		self._folder.Parent = if show then workspace else nil
+		print(string.format("[HealthHUD] folder.Parent set to %s", tostring(if show then "workspace" else "nil")))
+	else
+		print("[HealthHUD] WARNING: _folder is nil!")
+	end
 end
 
 function HealthHUD:Destroy()

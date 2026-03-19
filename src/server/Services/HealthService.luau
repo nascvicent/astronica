@@ -7,6 +7,7 @@ local HealthService = Knit.CreateService({
 
 	Client = {
 		HealthChanged = Knit.CreateSignal(), -- (health, maxHealth)
+		ToggleHUD = Knit.CreateSignal(),     -- (show: boolean)
 	},
 })
 
@@ -16,6 +17,11 @@ function HealthService.Client:GetHealth(player: Player): (number, number)
 		return humanoid.Health, humanoid.MaxHealth
 	end
 	return 0, HealthModule.DEFAULT_MAX_HEALTH
+end
+
+function HealthService:ToggleHUD(player: Player, show: boolean)
+	print(string.format("[HealthService] ToggleHUD firing for %s — show: %s", player.Name, tostring(show)))
+	self.Client.ToggleHUD:Fire(player, show)
 end
 
 function HealthService:_getHumanoid(player: Player): Humanoid?
