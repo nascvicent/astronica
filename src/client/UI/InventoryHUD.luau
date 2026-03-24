@@ -7,6 +7,7 @@
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 
 local InventoryModule = require(game:GetService("ReplicatedStorage").Shared.InventoryModule)
 
@@ -22,7 +23,8 @@ local PPS = 512
 -- Quick bar (3 slots, bottom-right, ângulo holográfico)
 local QB_PART_SIZE = Vector3.new(1.6, 0.45, 0.01)
 local QB_DEPTH = 4          -- distância Z da câmera
-local QB_SCREEN_X = 0.62    -- compensado para centralizar conjunto (quick bar + icon) simétrico ao health (-0.70)
+local IS_MOBILE = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local QB_SCREEN_X = if IS_MOBILE then 0.35 else 0.62    -- mobile: mais perto do centro para não esbarrar nos botões de movimento
 local QB_SCREEN_Y = 0.78    -- mesma altura do health
 local QB_ROT_Y = -15
 local QB_SLOT_COUNT = 3
@@ -176,7 +178,7 @@ function InventoryHUD:_createSlotFrame(parent: Instance, showName: boolean)
 	abbrLabel.Text = ""
 	abbrLabel.TextColor3 = C.text
 	abbrLabel.TextScaled = true
-	abbrLabel.Font = Enum.Font.GothamBold
+	abbrLabel.Font = Enum.Font.Jura
 	abbrLabel.Parent = frame
 
 	-- Quantidade (canto inferior direito)
@@ -188,9 +190,16 @@ function InventoryHUD:_createSlotFrame(parent: Instance, showName: boolean)
 	qtyLabel.Text = ""
 	qtyLabel.TextColor3 = C.quantity
 	qtyLabel.TextScaled = true
-	qtyLabel.Font = Enum.Font.GothamBold
-	qtyLabel.TextXAlignment = Enum.TextXAlignment.Right
-	qtyLabel.Parent = frame
+
+-- Bold aplicado corretamente
+qtyLabel.FontFace = Font.new(
+    "rbxasset://fonts/families/Jura.json",
+    Enum.FontWeight.Bold,
+    Enum.FontStyle.Normal
+)
+
+qtyLabel.TextXAlignment = Enum.TextXAlignment.Right
+qtyLabel.Parent = frame
 
 	-- Nome do item (inferior, só no inventário completo)
 	local nameLabel = nil
@@ -203,7 +212,7 @@ function InventoryHUD:_createSlotFrame(parent: Instance, showName: boolean)
 		nameLabel.Text = ""
 		nameLabel.TextColor3 = C.textDim
 		nameLabel.TextScaled = true
-		nameLabel.Font = Enum.Font.Gotham
+		nameLabel.Font = Enum.Font.Jura
 		nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 		nameLabel.Parent = frame
 	end
@@ -387,7 +396,7 @@ function InventoryHUD:_buildFullInventory()
 		tabBtn.Text = string.upper(tabName)
 		tabBtn.TextColor3 = if i == 1 then C.title else C.textDim
 		tabBtn.TextScaled = true
-		tabBtn.Font = Enum.Font.GothamBold
+		tabBtn.Font = Enum.Font.Jura
 		tabBtn.AutoButtonColor = false
 		tabBtn.BorderSizePixel = 0
 		tabBtn.LayoutOrder = i
@@ -434,7 +443,7 @@ function InventoryHUD:_buildFullInventory()
 	closeBtn.Text = "X"
 	closeBtn.TextColor3 = C.textDim
 	closeBtn.TextScaled = true
-	closeBtn.Font = Enum.Font.GothamBold
+	closeBtn.Font = Enum.Font.Jura
 	closeBtn.Parent = header
 
 	closeBtn.Activated:Connect(function()
@@ -530,7 +539,7 @@ function InventoryHUD:_buildFullInventory()
 	prevTitle.Text = "EQUIPMENT"
 	prevTitle.TextColor3 = C.title
 	prevTitle.TextScaled = true
-	prevTitle.Font = Enum.Font.GothamBold
+	prevTitle.Font = Enum.Font.Jura
 	prevTitle.TextXAlignment = Enum.TextXAlignment.Left
 	prevTitle.Parent = previewSection
 
@@ -563,7 +572,7 @@ function InventoryHUD:_buildFullInventory()
 	vpPlaceholder.Text = "3D PREVIEW"
 	vpPlaceholder.TextColor3 = Color3.fromRGB(30, 45, 70)
 	vpPlaceholder.TextScaled = true
-	vpPlaceholder.Font = Enum.Font.GothamBold
+	vpPlaceholder.Font = Enum.Font.Jura
 	vpPlaceholder.Parent = viewportHolder
 
 	-- Info do item selecionado (abaixo do viewport)
@@ -583,7 +592,7 @@ function InventoryHUD:_buildFullInventory()
 	itemName.Text = ""
 	itemName.TextColor3 = C.quantity
 	itemName.TextScaled = true
-	itemName.Font = Enum.Font.GothamBold
+	itemName.Font = Enum.Font.Jura
 	itemName.TextXAlignment = Enum.TextXAlignment.Left
 	itemName.Parent = itemInfo
 	self._previewItemName = itemName
@@ -596,7 +605,7 @@ function InventoryHUD:_buildFullInventory()
 	itemDesc.Text = ""
 	itemDesc.TextColor3 = C.textDim
 	itemDesc.TextScaled = true
-	itemDesc.Font = Enum.Font.Gotham
+	itemDesc.Font = Enum.Font.Jura
 	itemDesc.TextXAlignment = Enum.TextXAlignment.Left
 	itemDesc.TextYAlignment = Enum.TextYAlignment.Top
 	itemDesc.TextWrapped = true
@@ -611,7 +620,7 @@ function InventoryHUD:_buildFullInventory()
 	itemQty.Text = ""
 	itemQty.TextColor3 = C.resource
 	itemQty.TextScaled = true
-	itemQty.Font = Enum.Font.GothamBold
+	itemQty.Font = Enum.Font.Jura
 	itemQty.TextXAlignment = Enum.TextXAlignment.Left
 	itemQty.Parent = itemInfo
 	self._previewItemQty = itemQty
@@ -754,6 +763,23 @@ end
 
 function InventoryHUD:IsOpen(): boolean
 	return self._isOpen
+end
+
+function InventoryHUD:SetVisible(show: boolean)
+	if self._qbGui then
+		self._qbGui.Enabled = show
+	end
+	if self._tbGui then
+		self._tbGui.Enabled = show
+	end
+	if self._folder then
+		self._folder.Parent = if show then workspace else nil
+	end
+	-- Se escondendo, fecha o inventário completo também
+	if not show and self._isOpen then
+		self._isOpen = false
+		self._fullGui.Enabled = false
+	end
 end
 
 -- ═══════════════════════════════════════════════════════════

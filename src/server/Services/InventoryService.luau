@@ -20,6 +20,7 @@ local InventoryService = Knit.CreateService({
 	Client = {
 		InventoryChanged = Knit.CreateSignal(),
 		SlotUpdated = Knit.CreateSignal(),
+		ToggleHUD = Knit.CreateSignal(), -- (show: boolean)
 	},
 
 	_inventoryData = {} :: { [number]: { slots: { [number]: any }, maxSlots: number } },
@@ -192,6 +193,10 @@ function InventoryService:MoveItem(player: Player, fromSlot: number, toSlot: num
 	end
 
 	return true, "OK"
+end
+
+function InventoryService:ToggleHUD(player: Player, show: boolean)
+	self.Client.ToggleHUD:Fire(player, show)
 end
 
 -- ============================================================

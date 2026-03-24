@@ -28,6 +28,10 @@ function InventoryController:KnitStart()
 		self._hud:UpdateSlot(slotIndex, slotData)
 	end)
 
+	InventoryService.ToggleHUD:Connect(function(show)
+		self._hud:SetVisible(show)
+	end)
+
 	InventoryService:GetInventory():andThen(function(data)
 		self._inventory = data
 		self._hud:UpdateAll(data)

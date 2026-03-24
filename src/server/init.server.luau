@@ -5,6 +5,7 @@ local Players = game:GetService("Players")
 require(script.Services.LumenService)
 require(script.Services.InventoryService)
 require(script.Services.HealthService)
+require(script.Services.GravityService)
 
 -- Start Knit
 Knit.Start():catch(warn):await()
