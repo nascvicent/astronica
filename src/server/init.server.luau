@@ -6,6 +6,8 @@ require(script.Services.LumenService)
 require(script.Services.InventoryService)
 require(script.Services.HealthService)
 require(script.Services.GravityService)
+require(script.Services.MiningService)
+require(script.Services.ToolService)
 
 -- Start Knit
 Knit.Start():catch(warn):await()

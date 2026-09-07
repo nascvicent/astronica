@@ -14,9 +14,10 @@
 		hud:Destroy()
 ]]
 
-local RunService   = game:GetService("RunService")
-local Players      = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
+local RunService      = game:GetService("RunService")
+local Players         = game:GetService("Players")
+local TweenService    = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -29,8 +30,10 @@ local PPS        = 512
 local PART_SIZE  = Vector3.new(0.9, 0.45, 0.01)
 local DEPTH      = 4        -- distância Z da câmera
 local SCREEN_X   = -0.72   -- negativo = esquerda
+local SCREEN_X_MOBILE = -0.52  -- mais próximo do centro no celular
 local SCREEN_Y   = 0.72    -- positivo = topo
 local ROT_Y      = 15      -- inclinação holográfica (espelho do InventoryHUD)
+local IS_MOBILE  = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
 -- Cores (mesmo tema do InventoryHUD)
 local C = {
@@ -238,7 +241,8 @@ function SpeedHUD:_onRender()
 	local halfH  = DEPTH * math.tan(fovRad / 2)
 	local halfW  = halfH * (cam.ViewportSize.X / cam.ViewportSize.Y)
 
-	local worldX = halfW * SCREEN_X
+	local screenX = if IS_MOBILE then SCREEN_X_MOBILE else SCREEN_X
+	local worldX = halfW * screenX
 	local worldY = halfH * SCREEN_Y
 
 	self._part.CFrame = cam.CFrame

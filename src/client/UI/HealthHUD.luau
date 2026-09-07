@@ -1,6 +1,7 @@
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -12,22 +13,36 @@ HealthHUD.__index = HealthHUD
 local PPS = 512
 
 -- Part size and screen-normalized position
-local PART_SIZE = Vector3.new(1.2, 0.45, 0.01)
+local PART_SIZE = Vector3.new(1.2, 0.3, 0.01)
 local DEPTH = 4          -- distância Z da câmera
 local SCREEN_X = -0.70   -- posição normalizada (-1 = borda esquerda, 1 = borda direita)
+local SCREEN_X_MOBILE = -0.50  -- mais próximo do centro no celular
 local SCREEN_Y = 0.82    -- posição normalizada (positivo = baixo)
 local ROT_Y = 15
+local IS_MOBILE = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
--- Layout (proportional)
-local ICON_SCALE = 0.85
-local BAR_X_START = 0.28 -- onde a barra começa (gap maior do ícone)
-local BAR_HEIGHT = 0.18
+-- Layout (proportional) — rótulo | barra segmentada | valor (igual à referência)
+-- A placa é mais fina que antes (PART_SIZE.Y), então os elementos ocupam uma
+-- fração maior dela para continuarem do mesmo tamanho na tela.
+local ICON_SCALE = 0.66
+local BAR_X_START = 0.24  -- onde a barra começa (gap depois do ícone)
+local BAR_WIDTH = 0.53
+local BAR_HEIGHT = 0.28
+local VALUE_X = 0.8       -- número à direita da barra
+local SEGMENTS = 10       -- barra dividida em blocos, não contínua
+local SEGMENT_GAP = 0.014 -- em escala da largura da barra
 
--- Colors
-local BAR_BG_COLOR = Color3.fromRGB(30, 34, 50)
-local BAR_FILL_COLOR = Color3.fromRGB(230, 235, 245)
+-- Colors — monocromático branco sobre placa escura (mesmo tema do inventário)
+local PLATE_COLOR = Color3.fromRGB(10, 11, 14)
+local PLATE_TRANSPARENCY = 0.32  -- a placa é o que dá contraste ao branco contra o céu
+local PLATE_LINE_TRANSPARENCY = 0.85
+local BAR_FILL_COLOR = Color3.fromRGB(255, 255, 255)
 local BAR_LOW_COLOR = Color3.fromRGB(220, 60, 60)
+local SEG_FILL_TRANSPARENCY = 0
+local SEG_EMPTY_TRANSPARENCY = 0.84
 local LOW_HEALTH_THRESHOLD = 0.25
+
+local JURA_BOLD = Font.new("rbxasset://fonts/families/Jura.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
 
 function HealthHUD.new()
 	local self = setmetatable({}, HealthHUD)
@@ -76,12 +91,30 @@ function HealthHUD:_build()
 	gui.Parent = playerGui
 	self._gui = gui
 
-	-- Container (full surface)
+	-- Placa escura: é ela que garante o contraste do branco contra o céu.
+	-- Para voltar ao HUD "flutuante" sem fundo, é só PLATE_TRANSPARENCY = 1.
 	local container = Instance.new("Frame")
 	container.Name = "Container"
 	container.Size = UDim2.new(1, 0, 1, 0)
-	container.BackgroundTransparency = 1
+	container.BackgroundColor3 = PLATE_COLOR
+	container.BackgroundTransparency = PLATE_TRANSPARENCY
+	container.BorderSizePixel = 0
 	container.Parent = gui
+
+	local plateCorner = Instance.new("UICorner")
+	plateCorner.CornerRadius = UDim.new(0, 9)
+	plateCorner.Parent = container
+
+	local plateStroke = Instance.new("UIStroke")
+	plateStroke.Color = BAR_FILL_COLOR
+	plateStroke.Thickness = 1
+	plateStroke.Transparency = PLATE_LINE_TRANSPARENCY
+	plateStroke.Parent = container
+
+	local platePadding = Instance.new("UIPadding")
+	platePadding.PaddingLeft = UDim.new(0.05, 0)
+	platePadding.PaddingRight = UDim.new(0.05, 0)
+	platePadding.Parent = container
 
 	-- Icon (left side) — COLOQUE O ASSET ID AQUI
 	local icon = Instance.new("ImageLabel")
@@ -100,24 +133,45 @@ function HealthHUD:_build()
 	iconAspect.AspectRatio = 1
 	iconAspect.Parent = icon
 
-	-- Bar background (square, no rounded corners)
-	local barBg = Instance.new("Frame")
-	barBg.Name = "BarBackground"
-	barBg.AnchorPoint = Vector2.new(0, 0.5)
-	barBg.Position = UDim2.new(BAR_X_START, 0, 0.5, 0)
-	barBg.Size = UDim2.new(1 - BAR_X_START, 0, BAR_HEIGHT, 0)
-	barBg.BackgroundColor3 = BAR_BG_COLOR
-	barBg.BorderSizePixel = 0
-	barBg.Parent = container
+	-- Barra segmentada (blocos, como na referência)
+	local barRow = Instance.new("Frame")
+	barRow.Name = "BarRow"
+	barRow.AnchorPoint = Vector2.new(0, 0.5)
+	barRow.Position = UDim2.new(BAR_X_START, 0, 0.5, 0)
+	barRow.Size = UDim2.new(BAR_WIDTH, 0, BAR_HEIGHT, 0)
+	barRow.BackgroundTransparency = 1
+	barRow.BorderSizePixel = 0
+	barRow.Parent = container
 
-	-- Bar fill (square, no rounded corners)
-	local barFill = Instance.new("Frame")
-	barFill.Name = "BarFill"
-	barFill.Size = UDim2.new(1, 0, 1, 0)
-	barFill.BackgroundColor3 = BAR_FILL_COLOR
-	barFill.BorderSizePixel = 0
-	barFill.Parent = barBg
-	self._barFill = barFill
+	local segWidth = (1 - SEGMENT_GAP * (SEGMENTS - 1)) / SEGMENTS
+	self._segments = {}
+
+	for i = 1, SEGMENTS do
+		local seg = Instance.new("Frame")
+		seg.Name = "Seg" .. i
+		seg.Size = UDim2.new(segWidth, 0, 1, 0)
+		seg.Position = UDim2.new((i - 1) * (segWidth + SEGMENT_GAP), 0, 0, 0)
+		seg.BackgroundColor3 = BAR_FILL_COLOR
+		seg.BackgroundTransparency = SEG_FILL_TRANSPARENCY
+		seg.BorderSizePixel = 0
+		seg.Parent = barRow
+		self._segments[i] = seg
+	end
+
+	-- Valor numérico à direita
+	local value = Instance.new("TextLabel")
+	value.Name = "Value"
+	value.AnchorPoint = Vector2.new(0, 0.5)
+	value.Position = UDim2.new(VALUE_X, 0, 0.5, 0)
+	value.Size = UDim2.new(1 - VALUE_X, 0, 0.55, 0)
+	value.BackgroundTransparency = 1
+	value.Text = "100"
+	value.TextColor3 = BAR_FILL_COLOR
+	value.TextScaled = true
+	value.FontFace = JURA_BOLD
+	value.TextXAlignment = Enum.TextXAlignment.Right
+	value.Parent = container
+	self._valueLabel = value
 end
 
 function HealthHUD:_onRender()
@@ -129,7 +183,8 @@ function HealthHUD:_onRender()
 	local halfH = DEPTH * math.tan(fovRad / 2)
 	local halfW = halfH * (cam.ViewportSize.X / cam.ViewportSize.Y)
 
-	local worldX = halfW * SCREEN_X
+	local screenX = if IS_MOBILE then SCREEN_X_MOBILE else SCREEN_X
+	local worldX = halfW * screenX
 	local worldY = halfH * -SCREEN_Y -- Y negativo no mundo = baixo da tela
 
 	self._part.CFrame = cam.CFrame
@@ -147,10 +202,23 @@ function HealthHUD:Update(health: number, maxHealth: number)
 
 	local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
-	TweenService:Create(self._barFill, tweenInfo, {
-		Size = UDim2.new(ratio, 0, 1, 0),
-		BackgroundColor3 = targetColor,
-	}):Play()
+	-- Cada bloco vale 1/SEGMENTS; o bloco "da vez" recebe preenchimento parcial
+	-- via transparência, para a barra não pular de degrau em degrau.
+	local filled = ratio * SEGMENTS
+
+	for i, seg in ipairs(self._segments) do
+		local amount = math.clamp(filled - (i - 1), 0, 1)
+		local transparency = SEG_EMPTY_TRANSPARENCY
+			+ (SEG_FILL_TRANSPARENCY - SEG_EMPTY_TRANSPARENCY) * amount
+
+		TweenService:Create(seg, tweenInfo, {
+			BackgroundTransparency = transparency,
+			BackgroundColor3 = targetColor,
+		}):Play()
+	end
+
+	self._valueLabel.Text = tostring(math.floor(health + 0.5))
+	self._valueLabel.TextColor3 = targetColor
 end
 
 function HealthHUD:SetVisible(show: boolean)
