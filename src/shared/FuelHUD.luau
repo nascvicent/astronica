@@ -14,9 +14,10 @@
 		hud:Destroy()
 ]]
 
-local RunService   = game:GetService("RunService")
-local Players      = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
+local RunService      = game:GetService("RunService")
+local Players         = game:GetService("Players")
+local TweenService    = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -29,8 +30,10 @@ local PPS        = 512
 local PART_SIZE  = Vector3.new(0.9, 0.25, 0.01)  -- mais largo e baixo que SpeedHUD
 local DEPTH      = 4
 local SCREEN_X   = -0.72    -- mesma coluna do SpeedHUD
+local SCREEN_X_MOBILE = -0.52  -- mais próximo do centro no celular
 local SCREEN_Y   = -0.72     -- abaixo do SpeedHUD (0.72 → 0.50)
 local ROT_Y      = 15
+local IS_MOBILE  = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
 -- Cores — mesmo tema holográfico
 local C = {
@@ -310,7 +313,8 @@ function FuelHUD:_onRender()
 	local halfH  = DEPTH * math.tan(fovRad / 2)
 	local halfW  = halfH * (cam.ViewportSize.X / cam.ViewportSize.Y)
 
-	local worldX = halfW * SCREEN_X
+	local screenX = if IS_MOBILE then SCREEN_X_MOBILE else SCREEN_X
+	local worldX = halfW * screenX
 	local worldY = halfH * SCREEN_Y
 
 	self._part.CFrame = cam.CFrame
