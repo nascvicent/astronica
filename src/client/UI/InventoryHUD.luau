@@ -13,7 +13,9 @@ local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
-local InventoryModule = require(game:GetService("ReplicatedStorage").Shared.InventoryModule)
+local Shared = game:GetService("ReplicatedStorage").Shared
+local InventoryModule = require(Shared.InventoryModule)
+local ItemModels = require(Shared.ItemModels)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -44,6 +46,10 @@ local FULL_ROWS = 6
 
 -- Tabs
 local TABS = { "Itens", "Traje", "Nave" }
+
+-- Ícone 3D do item (ViewportFrame). Com false, volta pra abreviação em texto.
+local ICON_3D = true
+local ICON_SPIN_SPEED = 0.7   -- rad/s; 0 deixa o item parado no ângulo 3/4
 
 -- ═══════════════════════════════════════════════════════════
 -- Paleta — monocromática (teste "tudo branco")
@@ -113,14 +119,6 @@ local FONT_BOLD = Font.new(JURA, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
 -- ═══════════════════════════════════════════════════════════
 -- Helpers
 -- ═══════════════════════════════════════════════════════════
-
-local function getInitials(name: string): string
-	local initials = ""
-	for word in string.gmatch(name, "%S+") do
-		initials ..= string.upper(string.sub(word, 1, 1))
-	end
-	return initials
-end
 
 -- "INVENTORY" -> "I N V E N T O R Y" (letter-spacing manual)
 local function spaced(text: string): string
@@ -210,8 +208,9 @@ function InventoryHUD.new()
 	self._onMove = nil
 
 	-- Render loop (só quick bar 3D)
-	self._renderConn = RunService.RenderStepped:Connect(function()
-		self:_onRender()
+	self._iconSpin = 0
+	self._renderConn = RunService.RenderStepped:Connect(function(dt)
+		self:_onRender(dt)
 	end)
 
 	return self
@@ -270,7 +269,21 @@ function InventoryHUD:_createSlotFrame(parent: Instance, showName: boolean, dark
 
 	local slotStroke = addStroke(frame, slot.lineEmpty, 1)
 
-	-- Abreviação do item (centro)
+	-- Ícone 3D do item (centro) — modelo num ViewportFrame
+	local iconViewport = nil
+	if ICON_3D then
+		iconViewport = Instance.new("ViewportFrame")
+		iconViewport.Name = "Icon3D"
+		iconViewport.AnchorPoint = Vector2.new(0.5, 0.5)
+		iconViewport.Size = UDim2.fromScale(0.7, if showName then 0.54 else 0.7)
+		iconViewport.Position = UDim2.fromScale(0.5, if showName then 0.32 else 0.5)
+		iconViewport.BorderSizePixel = 0
+		iconViewport.Visible = false
+		ItemModels.StyleViewport(iconViewport)
+		iconViewport.Parent = frame
+	end
+
+	-- Abreviação do item (centro) — fallback quando ICON_3D = false
 	local abbrLabel = Instance.new("TextLabel")
 	abbrLabel.Name = "Abbr"
 	abbrLabel.Size = UDim2.new(1, 0, if showName then 0.62 else 1, 0)
@@ -319,6 +332,7 @@ function InventoryHUD:_createSlotFrame(parent: Instance, showName: boolean, dark
 
 	slot.frame = frame
 	slot.stroke = slotStroke
+	slot.iconViewport = iconViewport
 	slot.abbrLabel = abbrLabel
 	slot.qtyLabel = qtyLabel
 	slot.nameLabel = nameLabel
@@ -842,6 +856,43 @@ end
 -- Slot rendering
 -- ═══════════════════════════════════════════════════════════
 
+--- Troca o item mostrado no slot. itemId = nil esvazia.
+--- Só remonta o modelo quando o item muda: montar custa clone + câmera.
+function InventoryHUD:_setSlotIcon(slotUI, itemId: string?)
+	if not ICON_3D then
+		-- Fallback em texto: iniciais do nome do item
+		local def = itemId and InventoryModule.GetItemDef(itemId)
+		local text = ""
+		if def then
+			for word in string.gmatch(def.name, "%S+") do
+				text ..= string.upper(string.sub(word, 1, 1))
+			end
+		end
+		slotUI.abbrLabel.Text = text
+		return
+	end
+
+	slotUI.abbrLabel.Text = ""
+
+	local viewport = slotUI.iconViewport
+	if not viewport then return end
+
+	if slotUI.iconItemId == itemId then
+		return
+	end
+	slotUI.iconItemId = itemId
+
+	if not itemId then
+		ItemModels.Clear(viewport)
+		slotUI.iconModel = nil
+		viewport.Visible = false
+		return
+	end
+
+	slotUI.iconModel = ItemModels.Mount(viewport, itemId, MONOCHROME)
+	viewport.Visible = slotUI.iconModel ~= nil
+end
+
 function InventoryHUD:_renderSlot(slotUI, slotData)
 	if not slotUI then return end
 
@@ -849,7 +900,7 @@ function InventoryHUD:_renderSlot(slotUI, slotData)
 		slotUI.hasItem = false
 		slotUI.stroke.Color = C.line
 		slotUI.stroke.Transparency = slotUI.lineEmpty
-		slotUI.abbrLabel.Text = ""
+		self:_setSlotIcon(slotUI, nil)
 		slotUI.qtyLabel.Text = ""
 		slotUI.frame.BackgroundTransparency = slotUI.bgEmpty
 		if slotUI.nameLabel then
@@ -867,7 +918,7 @@ function InventoryHUD:_renderSlot(slotUI, slotData)
 
 	slotUI.stroke.Color = catColor
 	slotUI.stroke.Transparency = slotUI.lineFill
-	slotUI.abbrLabel.Text = getInitials(def.name)
+	self:_setSlotIcon(slotUI, slotData.itemId)
 	slotUI.abbrLabel.TextColor3 = catColor
 	slotUI.abbrLabel.TextTransparency = T.textPrimary
 	slotUI.frame.BackgroundTransparency = slotUI.bgFill
@@ -1011,7 +1062,32 @@ end
 -- Camera follow (só quick bar 3D)
 -- ═══════════════════════════════════════════════════════════
 
-function InventoryHUD:_onRender()
+--- Gira os modelos dos slots visíveis. Os do inventário completo ficam
+--- parados enquanto o painel está fechado — não adianta girar o que ninguém vê.
+function InventoryHUD:_spinIcons(dt: number)
+	if not ICON_3D or ICON_SPIN_SPEED <= 0 then return end
+
+	self._iconSpin = (self._iconSpin + dt * ICON_SPIN_SPEED) % (2 * math.pi)
+	local pivot = CFrame.Angles(0, self._iconSpin, 0)
+
+	for _, slot in self._qbSlots do
+		if slot.iconModel then
+			slot.iconModel:PivotTo(pivot)
+		end
+	end
+
+	if self._isOpen then
+		for _, slot in self._fullSlots do
+			if slot.iconModel then
+				slot.iconModel:PivotTo(pivot)
+			end
+		end
+	end
+end
+
+function InventoryHUD:_onRender(dt: number)
+	self:_spinIcons(dt)
+
 	local cam = workspace.CurrentCamera
 	if not cam then return end
 
