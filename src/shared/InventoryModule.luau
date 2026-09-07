@@ -10,6 +10,19 @@ local InventoryModule = {}
 InventoryModule.DEFAULT_SLOTS = 20
 InventoryModule.MAX_STACK = 64
 
+-- Quantos slots do começo do inventário formam a hotbar (teclas 1..N).
+-- Client (HUD + teclas) e server (ToolService) leem daqui.
+InventoryModule.HOTBAR_SLOTS = 3
+
+-- Itens que todo jogador começa tendo
+InventoryModule.STARTING_ITEMS = {
+	{ itemId = "laser_pickaxe", quantity = 1 },
+}
+
+-- Suba este número sempre que mudar STARTING_ITEMS: quem já tem save recebe
+-- os itens novos uma vez, em vez de só valer pra conta criada do zero.
+InventoryModule.STARTING_ITEMS_VERSION = 1
+
 -- Catálogo de itens
 InventoryModule.Items = {
 	iron_ore = {
@@ -31,6 +44,8 @@ InventoryModule.Items = {
 		name = "Laser Pickaxe",
 		maxStack = 1,
 		category = "tool",
+		-- Nome da Tool em ServerStorage.Tools que este item equipa
+		toolTemplate = "LaserPistol",
 	},
 	star_map = {
 		name = "Star Map",
@@ -49,6 +64,12 @@ function InventoryModule.GetMaxStack(itemId: string): number
 		return def.maxStack
 	end
 	return InventoryModule.MAX_STACK
+end
+
+--- Nome da Tool que este item equipa, ou nil se o item não for equipável.
+function InventoryModule.GetToolTemplate(itemId: string): string?
+	local def = InventoryModule.Items[itemId]
+	return def and (def :: any).toolTemplate or nil
 end
 
 function InventoryModule.IsValidItem(itemId: string): boolean

@@ -25,6 +25,10 @@ local InventoryService = Knit.CreateService({
 
 	_inventoryData = {} :: { [number]: { slots: { [number]: any }, maxSlots: number } },
 	_dataLoaded = {} :: { [number]: boolean },
+
+	-- Jogadores cujo GetAsync falhou: têm inventário vazio em memória que NÃO
+	-- representa o save real, então gravar por cima apagaria o inventário deles.
+	_loadFailed = {} :: { [number]: boolean },
 })
 
 -- ============================================================
@@ -40,6 +44,19 @@ function InventoryService.Client:GetInventory(player: Player)
 	end
 
 	return self.Server:GetInventory(player)
+end
+
+function InventoryService.Client:MoveItem(player: Player, fromSlot: number, toSlot: number): (boolean, string)
+	if typeof(fromSlot) ~= "number" or typeof(toSlot) ~= "number" then
+		return false, "Invalid slot index"
+	end
+
+	if fromSlot ~= fromSlot or toSlot ~= toSlot then
+		return false, "Invalid slot index"
+	end
+
+	-- O MoveItem do servidor já valida os limites contra o maxSlots do jogador
+	return self.Server:MoveItem(player, math.floor(fromSlot), math.floor(toSlot))
 end
 
 -- ============================================================
@@ -248,8 +265,50 @@ function InventoryService:_loadPlayerData(player: Player)
 	self._inventoryData[userId] = data
 	self._dataLoaded[userId] = true
 
+	if not success then
+		-- Inventário vazio aqui significa "não consegui ler", não "não tem nada".
+		-- O jogo segue jogável, mas esse estado nunca pode virar save.
+		self._loadFailed[userId] = true
+		warn(string.format(
+			"[InventoryService] Load FAILED for %s — inventário desta sessão não será salvo",
+			player.Name
+		))
+	else
+		self._loadFailed[userId] = nil
+		self:_grantStartingItems(player)
+	end
+
 	self.Client.InventoryChanged:Fire(player, data)
 	print(string.format("[InventoryService] Loaded inventory for %s (%d slots used)", player.Name, self:_countSlots(userId)))
+end
+
+--- Entrega os itens iniciais uma única vez por jogador, marcando no próprio
+--- save qual versão da lista ele já recebeu.
+function InventoryService:_grantStartingItems(player: Player)
+	local data = self._inventoryData[player.UserId]
+	if not data then
+		return
+	end
+
+	if (data.startingItemsVersion or 0) >= InventoryModule.STARTING_ITEMS_VERSION then
+		return
+	end
+
+	for _, entry in InventoryModule.STARTING_ITEMS do
+		local ok, msg = self:AddItem(player, entry.itemId, entry.quantity)
+		if not ok then
+			warn(string.format(
+				"[InventoryService] Starting item %s failed for %s: %s",
+				entry.itemId,
+				player.Name,
+				msg
+			))
+		end
+	end
+
+	data.startingItemsVersion = InventoryModule.STARTING_ITEMS_VERSION
+
+	print(string.format("[InventoryService] Granted starting items to %s", player.Name))
 end
 
 function InventoryService:_countSlots(userId: number): number
@@ -267,6 +326,12 @@ end
 
 function InventoryService:_savePlayerData(userId: number)
 	if not self._dataLoaded[userId] then
+		return
+	end
+
+	-- Salvar aqui trocaria o inventário real do jogador por um vazio
+	if self._loadFailed[userId] then
+		warn(string.format("[InventoryService] Save skipped for userId %d — load had failed", userId))
 		return
 	end
 
@@ -302,6 +367,7 @@ function InventoryService:KnitInit()
 		self:_savePlayerData(userId)
 		self._inventoryData[userId] = nil
 		self._dataLoaded[userId] = nil
+		self._loadFailed[userId] = nil
 	end)
 
 	for _, player in Players:GetPlayers() do
