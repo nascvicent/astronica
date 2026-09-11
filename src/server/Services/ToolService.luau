@@ -42,6 +42,12 @@ local ToolService = Knit.CreateService({
 -- Helpers
 -- ═══════════════════════════════════════════════════════════
 
+--- Dentro da nave o jogador fica sentado no assento dela. Enquanto estiver
+--- sentado nada é equipável: a arma ficaria na mão atravessando a cabine.
+local function isInsideShip(humanoid: Humanoid?): boolean
+	return humanoid ~= nil and humanoid.SeatPart ~= nil
+end
+
 local function getHumanoid(player: Player): Humanoid?
 	local character = player.Character
 	if not character then
@@ -177,6 +183,10 @@ function ToolService:EquipSlot(player: Player, slotIndex: number): number
 		return self:Unequip(player)
 	end
 
+	if isInsideShip(humanoid) then
+		return self:Unequip(player)
+	end
+
 	-- Toggle: apertar de novo a mesma tecla guarda a arma
 	if self._equipped[player.UserId] == slotIndex then
 		return self:Unequip(player)
@@ -224,13 +234,35 @@ end
 -- ═══════════════════════════════════════════════════════════
 
 function ToolService:KnitInit()
+	--- Entrar na nave guarda o que estiver na mão: sem isso a arma continuaria
+	--- equipada dentro da cabine, já que o bloqueio do EquipSlot só vale para
+	--- quem tenta equipar depois de sentar.
+	local function bindSeat(player: Player, character: Model)
+		local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 10)
+		if not humanoid or not humanoid:IsA("Humanoid") then
+			return
+		end
+
+		humanoid.Seated:Connect(function(active: boolean)
+			if active then
+				self:Unequip(player)
+			end
+		end)
+	end
+
 	local function bindPlayer(player: Player)
 		-- Morrer destrói a Tool junto com o personagem: o estado tem que zerar,
 		-- senão a tecla do slot vira toggle-desequipa numa arma que não existe.
-		player.CharacterAdded:Connect(function()
+		player.CharacterAdded:Connect(function(character)
 			self._equipped[player.UserId] = nil
 			self.Client.SlotEquipped:Fire(player, 0)
+			bindSeat(player, character)
 		end)
+
+		-- Personagem que já nasceu antes do serviço subir não dispara CharacterAdded
+		if player.Character then
+			task.spawn(bindSeat, player, player.Character)
+		end
 	end
 
 	Players.PlayerAdded:Connect(bindPlayer)

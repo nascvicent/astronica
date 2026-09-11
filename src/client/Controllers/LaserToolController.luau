@@ -42,6 +42,18 @@ local SHAKE_AMPLITUDE = 0.05
 -- Transição de saída, quando desequipa
 local EXIT_TWEEN = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
+-- ═══════════════════════════════════════════════════════════
+-- Feixe dos outros jogadores
+-- ═══════════════════════════════════════════════════════════
+
+-- O servidor manda o ponto de impacto a cada tick (10 Hz). Sem suavizar, o
+-- feixe alheio andaria aos saltos.
+local REMOTE_LERP = 18
+
+-- Tempo (s) sem pacote depois do qual o feixe alheio some. O servidor manda o
+-- stop; isto é só a rede de segurança.
+local REMOTE_TIMEOUT = LaserConfig.TICK_RATE * 6
+
 local LaserToolController = Knit.CreateController({
 	Name = "LaserToolController",
 })
@@ -56,6 +68,7 @@ function LaserToolController:KnitInit()
 	self._accum = 0
 	self._boundTools = setmetatable({}, { __mode = "k" })
 	self._activeTool = nil
+	self._remoteRigs = {}
 
 	self._aiming = false
 	self._aimLockSuspended = false
@@ -87,6 +100,19 @@ function LaserToolController:KnitStart()
 
 	self._mining.MiningFailed:Connect(function(reason)
 		warn("[Laser] " .. tostring(reason))
+	end)
+
+	-- Feixe dos outros jogadores
+	self._mining.LaserBeam:Connect(function(shooter, endPoint, modeName, hit)
+		self:_onRemoteBeam(shooter, endPoint, modeName, hit)
+	end)
+
+	self._mining.LaserBeamStopped:Connect(function(shooter)
+		self:_removeRemoteRig(shooter)
+	end)
+
+	Players.PlayerRemoving:Connect(function(leaving)
+		self:_removeRemoteRig(leaving)
 	end)
 
 	-- Observa tools que chegam no backpack e no personagem
@@ -141,14 +167,12 @@ end
 -- Beam (feixe visual)
 -- ═══════════════════════════════════════════════════════════
 
-function LaserToolController:_buildBeam()
-	self._folder = Instance.new("Folder")
-	self._folder.Name = "LaserVFX"
-	self._folder.Parent = workspace.CurrentCamera
-
+--- Monta feixe + ponto de impacto + faíscas. Serve tanto pro feixe local
+--- quanto pro de cada jogador remoto — os dois têm o mesmo visual.
+function LaserToolController:_createRig(name: string)
 	-- Part invisível que marca o ponto de impacto
 	local endPart = Instance.new("Part")
-	endPart.Name = "LaserEnd"
+	endPart.Name = name
 	endPart.Size = Vector3.new(0.1, 0.1, 0.1)
 	endPart.Anchored = true
 	endPart.CanCollide = false
@@ -156,21 +180,19 @@ function LaserToolController:_buildBeam()
 	endPart.CanTouch = false
 	endPart.Transparency = 1
 	endPart.Parent = self._folder
-	self._endPart = endPart
 
-	self._endAttachment = Instance.new("Attachment")
-	self._endAttachment.Parent = endPart
+	local endAttachment = Instance.new("Attachment")
+	endAttachment.Parent = endPart
 
 	local beam = Instance.new("Beam")
 	beam.Name = "LaserBeam"
-	beam.Attachment1 = self._endAttachment
+	beam.Attachment1 = endAttachment
 	beam.FaceCamera = true
 	beam.LightEmission = 1
 	beam.LightInfluence = 0
 	beam.Transparency = NumberSequence.new(0.1)
 	beam.Enabled = false
 	beam.Parent = endPart
-	self._beam = beam
 
 	-- Faíscas no ponto de impacto
 	local sparks = Instance.new("ParticleEmitter")
@@ -182,17 +204,152 @@ function LaserToolController:_buildBeam()
 	sparks.Size = NumberSequence.new(0.18, 0)
 	sparks.LightEmission = 1
 	sparks.Parent = endPart
-	self._sparks = sparks
+
+	return {
+		endPart = endPart,
+		endAttachment = endAttachment,
+		beam = beam,
+		sparks = sparks,
+	}
+end
+
+function LaserToolController:_applyRigMode(rig, modeName: string)
+	local mode = LaserConfig.GetMode(modeName)
+	rig.beam.Color = ColorSequence.new(mode.Color)
+	rig.beam.Width0 = mode.BeamWidth
+	rig.beam.Width1 = mode.BeamWidth * 0.5
+	rig.sparks.Color = ColorSequence.new(mode.Color)
+end
+
+function LaserToolController:_buildBeam()
+	self._folder = Instance.new("Folder")
+	self._folder.Name = "LaserVFX"
+	self._folder.Parent = workspace.CurrentCamera
+
+	local rig = self:_createRig("LaserEnd")
+	self._rig = rig
+	self._endPart = rig.endPart
+	self._endAttachment = rig.endAttachment
+	self._beam = rig.beam
+	self._sparks = rig.sparks
 
 	self:_applyModeVisuals()
 end
 
 function LaserToolController:_applyModeVisuals()
-	local mode = LaserConfig.GetMode(self._mode)
-	self._beam.Color = ColorSequence.new(mode.Color)
-	self._beam.Width0 = mode.BeamWidth
-	self._beam.Width1 = mode.BeamWidth * 0.5
-	self._sparks.Color = ColorSequence.new(mode.Color)
+	self:_applyRigMode(self._rig, self._mode)
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- Feixe replicado (outros jogadores)
+-- ═══════════════════════════════════════════════════════════
+
+--- Muzzle da arma que o outro jogador está segurando. A Tool equipada vive
+--- dentro do personagem, então ela replica junto com o Attachment.
+local function findRemoteMuzzle(shooter: Player): Attachment?
+	local character = shooter.Character
+	if not character then
+		return nil
+	end
+
+	local tool = character:FindFirstChildOfClass("Tool")
+	if not tool or not tool:GetAttribute(LaserConfig.TOOL_ATTRIBUTE) then
+		return nil
+	end
+
+	local muzzle = LaserConfig.FindMuzzle(tool)
+	if muzzle then
+		return muzzle
+	end
+
+	-- Sem Muzzle o feixe sai do centro do Handle, igual ao feixe local
+	local handle = tool:FindFirstChild("Handle")
+	if not handle or not handle:IsA("BasePart") then
+		return nil
+	end
+
+	local fallback = handle:FindFirstChild("MuzzleFallback")
+	if not fallback then
+		fallback = Instance.new("Attachment")
+		fallback.Name = "MuzzleFallback"
+		fallback.Parent = handle
+	end
+	return fallback
+end
+
+function LaserToolController:_onRemoteBeam(shooter: Player, endPoint: Vector3, modeName: string, hit: boolean)
+	if shooter == player or typeof(endPoint) ~= "Vector3" then
+		return
+	end
+
+	local rig = self._remoteRigs[shooter]
+	if not rig then
+		rig = self:_createRig("LaserEnd_" .. shooter.Name)
+		rig.position = endPoint
+		self._remoteRigs[shooter] = rig
+	end
+
+	if rig.mode ~= modeName then
+		rig.mode = modeName
+		self:_applyRigMode(rig, modeName)
+	end
+
+	rig.target = endPoint
+	rig.expires = os.clock() + REMOTE_TIMEOUT
+	rig.sparks.Rate = 25
+	rig.sparks.Enabled = hit == true
+
+	self:_ensureRemoteLoop()
+end
+
+function LaserToolController:_removeRemoteRig(shooter: Player)
+	local rig = self._remoteRigs[shooter]
+	if not rig then
+		return
+	end
+	self._remoteRigs[shooter] = nil
+	rig.endPart:Destroy()
+end
+
+--- O loop só existe enquanto alguém por perto está atirando.
+function LaserToolController:_ensureRemoteLoop()
+	if self._remoteConn then
+		return
+	end
+
+	self._remoteConn = RunService.RenderStepped:Connect(function(dt)
+		self:_updateRemoteRigs(dt)
+	end)
+end
+
+function LaserToolController:_updateRemoteRigs(dt: number)
+	local now = os.clock()
+	local any = false
+
+	for shooter, rig in self._remoteRigs do
+		if now > rig.expires or not shooter.Parent then
+			self:_removeRemoteRig(shooter)
+			continue
+		end
+
+		any = true
+
+		local muzzle = findRemoteMuzzle(shooter)
+		if muzzle then
+			rig.beam.Attachment0 = muzzle
+			rig.position = rig.position:Lerp(rig.target, math.min(dt * REMOTE_LERP, 1))
+			rig.endPart.Position = rig.position
+			rig.beam.Enabled = true
+		else
+			-- Personagem ainda carregando ou arma guardada: sem origem, sem feixe
+			rig.beam.Enabled = false
+		end
+	end
+
+	if not any and self._remoteConn then
+		self._remoteConn:Disconnect()
+		self._remoteConn = nil
+	end
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -444,6 +601,11 @@ function LaserToolController:_stopFiring()
 	self._beam.Enabled = false
 	self._sparks.Rate = 0
 	self._crosshair:SetFiring(false)
+
+	-- Sem isso o feixe dos outros só sumiria no timeout do servidor
+	if self._mining then
+		self._mining.StopLaser:Fire()
+	end
 end
 
 function LaserToolController:_onRender(dt: number)

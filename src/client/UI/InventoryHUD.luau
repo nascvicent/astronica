@@ -50,6 +50,9 @@ local TABS = { "Itens", "Traje", "Nave" }
 -- Ícone 3D do item (ViewportFrame). Com false, volta pra abreviação em texto.
 local ICON_3D = true
 local ICON_SPIN_SPEED = 0.7   -- rad/s; 0 deixa o item parado no ângulo 3/4
+-- TESTE: ícone com a cor original do modelo, para o item se destacar melhor
+-- na quick bar. O resto do HUD segue monocromático. false volta pro cinza.
+local ICON_COLOR = true
 
 -- ═══════════════════════════════════════════════════════════
 -- Paleta — monocromática (teste "tudo branco")
@@ -275,8 +278,8 @@ function InventoryHUD:_createSlotFrame(parent: Instance, showName: boolean, dark
 		iconViewport = Instance.new("ViewportFrame")
 		iconViewport.Name = "Icon3D"
 		iconViewport.AnchorPoint = Vector2.new(0.5, 0.5)
-		iconViewport.Size = UDim2.fromScale(0.7, if showName then 0.54 else 0.7)
-		iconViewport.Position = UDim2.fromScale(0.5, if showName then 0.32 else 0.5)
+		iconViewport.Size = UDim2.fromScale(if showName then 0.88 else 0.86, if showName then 0.64 else 0.86)
+		iconViewport.Position = UDim2.fromScale(0.5, if showName then 0.34 else 0.5)
 		iconViewport.BorderSizePixel = 0
 		iconViewport.Visible = false
 		ItemModels.StyleViewport(iconViewport)
@@ -889,7 +892,7 @@ function InventoryHUD:_setSlotIcon(slotUI, itemId: string?)
 		return
 	end
 
-	slotUI.iconModel = ItemModels.Mount(viewport, itemId, MONOCHROME)
+	slotUI.iconModel = ItemModels.Mount(viewport, itemId, MONOCHROME and not ICON_COLOR)
 	viewport.Visible = slotUI.iconModel ~= nil
 end
 

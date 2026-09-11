@@ -29,21 +29,31 @@ local MiningService = Knit.CreateService({
 	Client = {
 		-- client → server
 		FireLaser = Knit.CreateSignal(), -- (aimPoint: Vector3, mode: string)
+		StopLaser = Knit.CreateSignal(), -- ()
 
 		-- server → client
 		NodeProgress = Knit.CreateSignal(), -- (node: BasePart, progress: number 0-1)
 		NodeDepleted = Knit.CreateSignal(), -- (node: BasePart, itemId: string, amount: number)
 		MiningFailed = Knit.CreateSignal(), -- (reason: string)
+
+		-- server → todos os outros clients (quem atirou já desenha o próprio feixe)
+		LaserBeam = Knit.CreateSignal(), -- (shooter: Player, endPoint: Vector3, mode: string, hit: boolean)
+		LaserBeamStopped = Knit.CreateSignal(), -- (shooter: Player)
 	},
 
 	_nodes = {} :: { [BasePart]: any },
 	_lastTick = {} :: { [number]: number },
 	_lastFail = {} :: { [number]: number },
+	_firing = {} :: { [Player]: number },
 })
 
 -- Intervalo mínimo (s) entre dois MiningFailed pro mesmo jogador.
 -- Sem isso, minerar com inventário cheio avisa a 10 pacotes por segundo.
 local FAIL_COOLDOWN = 2
+
+-- Tempo (s) sem tick depois do qual o feixe replicado é desligado sozinho.
+-- Cobre os casos em que o StopLaser não chega: morte, queda de conexão, lag.
+local BEAM_TIMEOUT = LaserConfig.TICK_RATE * 4
 
 -- ═══════════════════════════════════════════════════════════
 -- Nodes
@@ -137,6 +147,21 @@ end
 -- Disparo
 -- ═══════════════════════════════════════════════════════════
 
+--- Espelha o feixe para os outros jogadores. O client do atirador desenha o
+--- feixe localmente, então ele fica de fora do broadcast.
+function MiningService:_broadcastBeam(player: Player, endPoint: Vector3, modeName: string, hit: boolean)
+	self._firing[player] = os.clock()
+	self.Client.LaserBeam:FireExcept(player, player, endPoint, modeName, hit)
+end
+
+function MiningService:_stopBeam(player: Player)
+	if not self._firing[player] then
+		return
+	end
+	self._firing[player] = nil
+	self.Client.LaserBeamStopped:FireExcept(player, player)
+end
+
 function MiningService:_getMuzzle(player: Player): (Tool?, BasePart?, Vector3?)
 	local character = player.Character
 	if not character then
@@ -196,6 +221,11 @@ function MiningService:_onFire(player: Player, aimPoint: Vector3, modeName: stri
 	params.IgnoreWater = true
 
 	local result = workspace:Raycast(origin, delta.Unit * mode.Range, params)
+
+	-- O feixe existe mesmo sem acerto: replica antes de sair
+	local endPoint = if result then result.Position else origin + delta.Unit * mode.Range
+	self:_broadcastBeam(player, endPoint, modeName, result ~= nil)
+
 	if not result then
 		return
 	end
@@ -246,6 +276,7 @@ function MiningService:KnitInit()
 	Players.PlayerRemoving:Connect(function(player)
 		self._lastTick[player.UserId] = nil
 		self._lastFail[player.UserId] = nil
+		self:_stopBeam(player)
 	end)
 end
 
@@ -254,6 +285,23 @@ function MiningService:KnitStart()
 
 	self.Client.FireLaser:Connect(function(player, aimPoint, modeName)
 		self:_onFire(player, aimPoint, modeName)
+	end)
+
+	self.Client.StopLaser:Connect(function(player)
+		self:_stopBeam(player)
+	end)
+
+	-- Watchdog: desliga o feixe de quem parou de mandar tick sem avisar
+	task.spawn(function()
+		while true do
+			task.wait(LaserConfig.TICK_RATE)
+			local now = os.clock()
+			for firingPlayer, last in self._firing do
+				if now - last > BEAM_TIMEOUT then
+					self:_stopBeam(firingPlayer)
+				end
+			end
+		end
 	end)
 
 	local count = 0
