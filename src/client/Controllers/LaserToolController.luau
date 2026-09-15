@@ -233,6 +233,12 @@ function LaserToolController:_buildBeam()
 	self._beam = rig.beam
 	self._sparks = rig.sparks
 
+	self._fireSound = Instance.new("Sound")
+	self._fireSound.Name = "LaserFireSound"
+	self._fireSound.SoundId = LaserConfig.FIRE_SOUND_ID
+	self._fireSound.Looped = true
+	self._fireSound.Parent = self._folder
+
 	self:_applyModeVisuals()
 end
 
@@ -591,6 +597,7 @@ function LaserToolController:_startFiring()
 	self._beam.Enabled = true
 	self._sparks.Rate = 25
 	self._crosshair:SetFiring(true)
+	self._fireSound:Play()
 end
 
 function LaserToolController:_stopFiring()
@@ -601,6 +608,7 @@ function LaserToolController:_stopFiring()
 	self._beam.Enabled = false
 	self._sparks.Rate = 0
 	self._crosshair:SetFiring(false)
+	self._fireSound:Stop()
 
 	-- Sem isso o feixe dos outros só sumiria no timeout do servidor
 	if self._mining then

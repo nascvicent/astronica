@@ -39,6 +39,9 @@ end
 -- Dano é calculado por tempo real decorrido, então mudar isso não muda o DPS.
 LaserConfig.TICK_RATE = 0.1
 
+-- Som tocado ao começar a disparar
+LaserConfig.FIRE_SOUND_ID = "rbxassetid://140301279229381"
+
 -- ═══════════════════════════════════════════════════════════
 -- Modos de disparo
 -- ═══════════════════════════════════════════════════════════
