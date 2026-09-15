@@ -14,6 +14,49 @@ local function makeKey(userId: number): string
 	return KEY_PREFIX .. tostring(userId)
 end
 
+--- Saves antigos foram criados com mais slots do que DEFAULT_SLOTS. Traz o que
+--- estava além do limite para espaços livres dentro dele; se não couber tudo,
+--- mantém o tamanho antigo em vez de sumir com item do jogador.
+local function shrinkToDefaultSlots(data, playerName: string)
+	local limit = InventoryModule.DEFAULT_SLOTS
+	if data.maxSlots <= limit then
+		return
+	end
+
+	local overflow = {}
+	for index in data.slots do
+		local n = tonumber(index)
+		if n and n > limit then
+			table.insert(overflow, index)
+		end
+	end
+	table.sort(overflow, function(a, b)
+		return tonumber(a) < tonumber(b)
+	end)
+
+	local free = 1
+	for _, index in overflow do
+		while free <= limit and data.slots[free] do
+			free += 1
+		end
+
+		if free > limit then
+			warn(string.format(
+				"[InventoryService] %s tem itens demais para %d slots — mantendo %d",
+				playerName,
+				limit,
+				data.maxSlots
+			))
+			return
+		end
+
+		data.slots[free] = data.slots[index]
+		data.slots[index] = nil
+	end
+
+	data.maxSlots = limit
+end
+
 local InventoryService = Knit.CreateService({
 	Name = "InventoryService",
 
@@ -255,6 +298,7 @@ function InventoryService:_loadPlayerData(player: Player)
 		if not data.maxSlots then
 			data.maxSlots = InventoryModule.DEFAULT_SLOTS
 		end
+		shrinkToDefaultSlots(data, player.Name)
 	else
 		data = {
 			slots = {},

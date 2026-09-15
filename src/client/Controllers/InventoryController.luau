@@ -41,7 +41,7 @@ local InventoryController = Knit.CreateController({
 })
 
 function InventoryController:KnitInit()
-	self._inventory = { slots = {}, maxSlots = 20 }
+	self._inventory = { slots = {}, maxSlots = InventoryModule.DEFAULT_SLOTS }
 	self._equippedSlot = 0
 	self._hud = InventoryHUD.new()
 end
