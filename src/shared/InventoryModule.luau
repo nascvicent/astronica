@@ -7,7 +7,7 @@
 local InventoryModule = {}
 
 -- Constantes
-InventoryModule.DEFAULT_SLOTS = 20
+InventoryModule.DEFAULT_SLOTS = 10
 InventoryModule.MAX_STACK = 64
 
 -- Quantos slots do começo do inventário formam a hotbar (teclas 1..N).
@@ -23,25 +23,76 @@ InventoryModule.STARTING_ITEMS = {
 -- os itens novos uma vez, em vez de só valer pra conta criada do zero.
 InventoryModule.STARTING_ITEMS_VERSION = 1
 
+-- Raridades, da mais comum para a mais rara. tier cresce com a raridade e é
+-- o que a UI usa para decidir o quanto o item brilha.
+InventoryModule.DEFAULT_RARITY = "common"
+
+InventoryModule.Rarities = {
+	common = {
+		tier = 1,
+		name = "Comum",
+		color = Color3.fromRGB(200, 204, 212),
+	},
+	uncommon = {
+		tier = 2,
+		name = "Incomum",
+		color = Color3.fromRGB(90, 220, 130),
+	},
+	rare = {
+		tier = 3,
+		name = "Raro",
+		color = Color3.fromRGB(70, 160, 255),
+	},
+	epic = {
+		tier = 4,
+		name = "Épico",
+		color = Color3.fromRGB(185, 105, 255),
+	},
+	legendary = {
+		tier = 5,
+		name = "Lendário",
+		color = Color3.fromRGB(255, 185, 60),
+	},
+}
+
+export type RarityDef = { tier: number, name: string, color: Color3 }
+
+export type ItemDef = {
+	name: string,
+	description: string,
+	rarity: string,
+	maxStack: number,
+	category: string,
+	toolTemplate: string?,
+}
+
 -- Catálogo de itens
 InventoryModule.Items = {
 	iron_ore = {
 		name = "Iron Ore",
+		description = "Minério bruto de ferro extraído de asteroides. Matéria-prima básica para reparos e fabricação.",
+		rarity = "common",
 		maxStack = 64,
 		category = "resource",
 	},
 	crystal_shard = {
 		name = "Crystal Shard",
+		description = "Fragmento cristalino que guarda energia residual. Usado em componentes de precisão.",
+		rarity = "uncommon",
 		maxStack = 32,
 		category = "resource",
 	},
 	health_potion = {
 		name = "Health Potion",
+		description = "Dose de nanogel regenerativo. Recupera parte da vida ao ser consumida.",
+		rarity = "common",
 		maxStack = 16,
 		category = "consumable",
 	},
 	laser_pickaxe = {
 		name = "Laser Pickaxe",
+		description = "Ferramenta de mineração a laser. Aquece os minérios até derreterem e envia os fragmentos direto para o inventário.",
+		rarity = "rare",
 		maxStack = 1,
 		category = "tool",
 		-- Nome da Tool em ServerStorage.Tools que este item equipa
@@ -49,13 +100,27 @@ InventoryModule.Items = {
 	},
 	star_map = {
 		name = "Star Map",
+		description = "Mapa estelar antigo com rotas que não aparecem em nenhum registro oficial.",
+		rarity = "legendary",
 		maxStack = 1,
 		category = "quest",
 	},
 }
 
-function InventoryModule.GetItemDef(itemId: string): { name: string, maxStack: number, category: string }?
+function InventoryModule.GetItemDef(itemId: string): ItemDef?
 	return InventoryModule.Items[itemId]
+end
+
+--- Raridade do item. Item sem raridade definida (ou com nome inválido) é comum.
+function InventoryModule.GetRarity(itemId: string): RarityDef
+	local def = InventoryModule.Items[itemId]
+	local rarity = def and InventoryModule.Rarities[def.rarity]
+	return rarity or InventoryModule.Rarities[InventoryModule.DEFAULT_RARITY]
+end
+
+function InventoryModule.GetDescription(itemId: string): string
+	local def = InventoryModule.Items[itemId]
+	return def and def.description or ""
 end
 
 function InventoryModule.GetMaxStack(itemId: string): number

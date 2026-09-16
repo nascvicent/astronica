@@ -274,12 +274,30 @@ function ItemModels.Mount(viewport: ViewportFrame, itemId: string, monochrome: b
 	end
 	model.Parent = viewport
 
-	-- Raio da esfera que envolve o item: serve pra qualquer ângulo do giro
 	local _, size = visibleBounds(model)
-	local radius = size.Magnitude / 2
+
+	-- O ícone só gira em torno de Y, então o que a câmera precisa enquadrar é o
+	-- cilindro varrido pelo giro, não a esfera que envolve o item. Num item
+	-- comprido feito a arma a esfera (a diagonal do item) sobra muito, e era o
+	-- que deixava o modelo pequeno no meio do slot.
+	local spinRadius = math.sqrt(size.X * size.X + size.Z * size.Z) / 2
+	local halfHeight = size.Y / 2
+
+	-- A câmera olha de cima em ângulo, então a altura na tela mistura a altura
+	-- real do item com o raio do giro: seno/cosseno da elevação de VIEW_DIR.
+	local sinElev = math.clamp(VIEW_DIR.Y, -1, 1)
+	local cosElev = math.sqrt(1 - sinElev * sinElev)
+	local halfScreen = halfHeight * cosElev + spinRadius * sinElev
+
+	-- O look lift empurra o item pra baixo do quadro: entra na conta para não
+	-- cortar o topo agora que o enquadramento ficou justo.
+	local lift = math.max(halfScreen, spinRadius) * VIEW_LOOK_LIFT
+
+	-- Slot com largura >= altura: quem manda é o maior dos dois eixos
+	local radius = math.max(halfScreen + lift * cosElev, spinRadius)
 	local distance = (radius / math.tan(math.rad(VIEW_FOV / 2))) * VIEW_PADDING
 
-	local focus = Vector3.new(0, radius * VIEW_LOOK_LIFT, 0)
+	local focus = Vector3.new(0, lift, 0)
 
 	local cam = Instance.new("Camera")
 	cam.FieldOfView = VIEW_FOV
