@@ -15,7 +15,7 @@ local GravityService = Knit.CreateService({
 })
 
 -- Fração da gravidade que permanece fora das estações (0.05 = 5% da gravidade normal)
-local LOW_GRAVITY_FACTOR = 0.05
+local LOW_GRAVITY_FACTOR = 0.5
 
 -- Intervalo de checagem (segundos)
 local CHECK_INTERVAL = 0.5
