@@ -45,9 +45,31 @@ local C = {
 	unitDim  = Color3.fromRGB(80, 110, 140),
 }
 
--- Limites para colorir a velocidade (branco → ciano → branco, igual ao engine)
--- Você pode ajustar MAX_SPEED para bater com config.Speed.Value da sua nave
-local MAX_SPEED = 200
+-- Escala da cor da velocidade (branco → ciano → branco, igual ao engine).
+-- O teto real vem de Configurations.Speed da nave em que o jogador está
+-- sentado — muda com upgrade de motor. Este número só vale se não achar.
+local FALLBACK_MAX_SPEED = 200
+
+--- Configurations.Speed da nave onde o jogador local está sentado.
+local function findSeatedMaxSpeed(): number?
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local seat = humanoid and humanoid.SeatPart
+	if not seat then
+		return nil
+	end
+
+	local node: Instance? = seat.Parent
+	while node and node ~= workspace do
+		local config = node:FindFirstChild("Configurations")
+		local speed = config and config:FindFirstChild("Speed")
+		if speed and speed:IsA("NumberValue") and speed.Value > 0 then
+			return speed.Value
+		end
+		node = node.Parent
+	end
+	return nil
+end
 
 -- ═══════════════════════════════════════════════════════════
 -- Module
@@ -72,6 +94,7 @@ function SpeedHUD.new()
 
 	-- Estado
 	self._currentSpeed = 0
+	self._maxSpeed = nil -- nil = procura na nave em que o jogador está sentado
 
 	-- Loop de câmera
 	self._renderConn = RunService.RenderStepped:Connect(function()
@@ -200,7 +223,8 @@ function SpeedHUD:SetSpeed(speed: number)
 	self._valueLabel.Text = tostring(rounded)
 
 	-- Cor do valor espelha o efeito do engine (branco → ciano → branco)
-	local power = math.clamp(speed / MAX_SPEED, 0, 1)
+	local maxSpeed = self._maxSpeed or findSeatedMaxSpeed() or FALLBACK_MAX_SPEED
+	local power = math.clamp(speed / maxSpeed, 0, 1)
 	local color
 	if power < 0.5 then
 		color = Color3.new(1, 1, 1):Lerp(Color3.fromRGB(0, 200, 255), power * 2)
@@ -209,6 +233,11 @@ function SpeedHUD:SetSpeed(speed: number)
 	end
 	self._valueLabel.TextColor3 = color
 	self._stroke.Color          = color
+end
+
+--- Fixa o teto da escala de cor. nil volta a ler do Configurations da nave.
+function SpeedHUD:SetMaxSpeed(maxSpeed: number?)
+	self._maxSpeed = maxSpeed
 end
 
 function SpeedHUD:SetVisible(show: boolean)

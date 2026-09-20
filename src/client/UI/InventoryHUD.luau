@@ -16,6 +16,8 @@ local UserInputService = game:GetService("UserInputService")
 local Shared = game:GetService("ReplicatedStorage").Shared
 local InventoryModule = require(Shared.InventoryModule)
 local ItemModels = require(Shared.ItemModels)
+local ShipData = require(Shared.ShipData)
+local ShipViewport = require(script.Parent.ShipViewport)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -34,6 +36,10 @@ local QB_SCREEN_X = if IS_MOBILE then 0.35 else 0.62    -- mobile: mais perto do
 local QB_SCREEN_Y = 0.78    -- mesma altura do health
 local QB_ROT_Y = -15
 local QB_SLOT_COUNT = InventoryModule.HOTBAR_SLOTS
+-- Tamanho do ícone 3D em relação ao slot. Passa de 1 de propósito: o
+-- enquadramento do ItemModels deixa folga em volta do modelo
+local QB_ICON_SCALE = 1.1
+local QB_QTY_TEXT_SIZE = 40  -- pixels da SurfaceGui (a 512 PPS aparece ~1/3 disso na tela)
 
 -- Toggle button (3D, à esquerda da quick bar)
 local TB_PART_SIZE = Vector3.new(0.22, 0.22, 0.01)
@@ -56,6 +62,8 @@ local SCROLLBAR = if IS_MOBILE then 6 else 2
 
 -- Tabs
 local TABS = { "Itens", "Traje", "Nave" }
+local SHIP_TAB = 3
+local SHIP_SPIN = 0.4 -- rad/s
 
 -- Ícone 3D do item (ViewportFrame). Com false, volta pra abreviação em texto.
 local ICON_3D = true
@@ -405,7 +413,7 @@ function InventoryHUD:_createSlotFrame(parent: Instance, showName: boolean, dark
 		iconViewport = Instance.new("ViewportFrame")
 		iconViewport.Name = "Icon3D"
 		iconViewport.AnchorPoint = Vector2.new(0.5, 0.5)
-		iconViewport.Size = UDim2.fromScale(if showName then 0.88 else 0.86, if showName then 0.64 else 0.86)
+		iconViewport.Size = UDim2.fromScale(if showName then 0.88 else QB_ICON_SCALE, if showName then 0.64 else QB_ICON_SCALE)
 		iconViewport.Position = UDim2.fromScale(0.5, if showName then 0.34 else 0.5)
 		iconViewport.BorderSizePixel = 0
 		iconViewport.Visible = false
@@ -430,16 +438,25 @@ function InventoryHUD:_createSlotFrame(parent: Instance, showName: boolean, dark
 	local qtyLabel = Instance.new("TextLabel")
 	qtyLabel.Name = "Qty"
 	qtyLabel.AnchorPoint = Vector2.new(1, 1)
-	qtyLabel.Size = UDim2.new(0.6, 0, 0, if showName then 14 else 17)
-	qtyLabel.Position = if showName then UDim2.new(1, -7, 0.66, 0) else UDim2.new(1, -7, 1, -6)
+	qtyLabel.Size = UDim2.new(0.6, 0, 0, if showName then 14 else QB_QTY_TEXT_SIZE + 4)
+	qtyLabel.Position = if showName then UDim2.new(1, -7, 0.66, 0) else UDim2.new(1, -10, 1, -6)
 	qtyLabel.BackgroundTransparency = 1
 	qtyLabel.Text = ""
 	qtyLabel.TextColor3 = C.text
 	qtyLabel.TextTransparency = T.textPrimary
-	qtyLabel.TextSize = if showName then 13 else 16
+	qtyLabel.TextSize = if showName then 13 else QB_QTY_TEXT_SIZE
 	qtyLabel.FontFace = FONT_BOLD
 	qtyLabel.TextXAlignment = Enum.TextXAlignment.Right
 	qtyLabel.Parent = frame
+
+	-- Quick bar: o número fica por cima do ícone, então precisa de contorno escuro
+	if not showName then
+		local qtyStroke = Instance.new("UIStroke")
+		qtyStroke.Color = C.plate
+		qtyStroke.Thickness = 3
+		qtyStroke.Transparency = 0.15
+		qtyStroke.Parent = qtyLabel
+	end
 
 	-- Nome do item (inferior, só no inventário completo)
 	local nameLabel = nil
@@ -948,6 +965,7 @@ function InventoryHUD:_buildFullInventory()
 	local bodyDivider = addDivider(body, false)
 	bodyDivider.Name = "BodyDivider"
 	bodyDivider.Position = UDim2.new(0.61, 0, 0, 0)
+	self._bodyDivider = bodyDivider
 
 	-- ── Preview (direita) ──
 	-- ScrollingFrame: no layout compacto a descrição não cabe e precisa rolar.
@@ -1068,7 +1086,199 @@ function InventoryHUD:_buildFullInventory()
 		self:_updatePreviewCanvas()
 	end)
 
+	self:_buildShipTab()
 	self:_applyFullLayout()
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- Aba "Nave" (somente leitura)
+-- ═══════════════════════════════════════════════════════════
+
+--- Mesma divisão do grid/preview: modelo à esquerda, ficha à direita.
+--- Melhorar e trocar de nave ficam na própria nave e no hangar.
+function InventoryHUD:_buildShipTab()
+	local tab = Instance.new("Frame")
+	tab.Name = "ShipTab"
+	tab.Size = UDim2.new(1, 0, 1, 0)
+	tab.BackgroundTransparency = 1
+	tab.Visible = false
+	tab.Parent = self._body
+	self._shipTab = tab
+
+	local holder = Instance.new("Frame")
+	holder.Name = "ShipViewportHolder"
+	holder.Size = UDim2.new(0.56, 0, 1, 0)
+	holder.BackgroundColor3 = C.surface
+	holder.BackgroundTransparency = 0.96
+	holder.BorderSizePixel = 0
+	holder.Parent = tab
+	addCorner(holder, 12)
+	self._shipViewportStroke = addStroke(holder, T.slotEmptyLine, 1)
+
+	local placeholder = addLabel(holder, "Placeholder", 12, FONT_REGULAR, 0.85)
+	placeholder.Size = UDim2.new(1, 0, 1, 0)
+	placeholder.Text = spaced("SEM NAVE")
+	placeholder.TextXAlignment = Enum.TextXAlignment.Center
+	self._shipPlaceholder = placeholder
+
+	local viewport = Instance.new("ViewportFrame")
+	viewport.Name = "ShipViewport"
+	viewport.Size = UDim2.new(1, -24, 1, -24)
+	viewport.Position = UDim2.fromOffset(12, 12)
+	viewport.BorderSizePixel = 0
+	ShipViewport.Style(viewport)
+	viewport.Parent = holder
+	self._shipViewport = viewport
+
+	local divider = addDivider(tab, false)
+	divider.Position = UDim2.new(0.61, 0, 0, 0)
+
+	local info = Instance.new("ScrollingFrame")
+	info.Name = "ShipInfo"
+	info.Size = UDim2.new(0.35, 0, 1, 0)
+	info.Position = UDim2.new(0.65, 0, 0, 0)
+	info.BackgroundTransparency = 1
+	info.BorderSizePixel = 0
+	info.ScrollBarThickness = SCROLLBAR
+	info.ScrollBarImageColor3 = C.line
+	info.ScrollBarImageTransparency = 0.7
+	info.ScrollingDirection = Enum.ScrollingDirection.Y
+	info.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	info.CanvasSize = UDim2.new(0, 0, 0, 0)
+	info.Parent = tab
+
+	local infoPadding = Instance.new("UIPadding")
+	infoPadding.PaddingTop = UDim.new(0, 14)
+	infoPadding.PaddingRight = UDim.new(0, SCROLLBAR + 4)
+	infoPadding.Parent = info
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Vertical
+	layout.Padding = UDim.new(0, 6)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = info
+
+	local rarity = addLabel(info, "Rarity", 12, FONT_BOLD, T.textPrimary)
+	rarity.Size = UDim2.new(1, 0, 0, 14)
+	rarity.LayoutOrder = 1
+	self._shipRarity = rarity
+
+	local name = addLabel(info, "Name", 18, FONT_MEDIUM, T.textPrimary)
+	name.Size = UDim2.new(1, 0, 0, 22)
+	name.TextTruncate = Enum.TextTruncate.AtEnd
+	name.LayoutOrder = 2
+	self._shipName = name
+
+	local hint = addLabel(info, "Hint", 12, FONT_REGULAR, T.textMuted)
+	hint.Size = UDim2.new(1, 0, 0, 0)
+	hint.AutomaticSize = Enum.AutomaticSize.Y
+	hint.TextWrapped = true
+	hint.LayoutOrder = 3
+	hint.Text = "Melhorias em AJUSTES, perto da nave. Troca de nave no hangar."
+
+	-- Linhas "rótulo ... valor", criadas uma vez e só reescritas
+	self._shipLines = {}
+	for i = 1, 13 do
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 18)
+		row.BackgroundTransparency = 1
+		row.LayoutOrder = 10 + i
+		row.Parent = info
+
+		local label = addLabel(row, "Label", 13, FONT_REGULAR, T.textMuted)
+		label.Size = UDim2.new(0.55, 0, 1, 0)
+
+		local value = addLabel(row, "Value", 13, FONT_MEDIUM, T.textPrimary)
+		value.Position = UDim2.new(0.55, 0, 0, 0)
+		value.Size = UDim2.new(0.45, 0, 1, 0)
+		value.TextXAlignment = Enum.TextXAlignment.Right
+
+		self._shipLines[i] = { row = row, label = label, value = value }
+	end
+end
+
+local function formatStat(x: number): string
+	if math.abs(x - math.floor(x)) < 0.05 then
+		return tostring(math.floor(x + 0.5))
+	end
+	return string.format("%.1f", x)
+end
+
+function InventoryHUD:_renderShipTab()
+	local state = self._shipState
+	local shipId = state and state.loaded and state.equipped
+	local def = shipId and ShipData.GetShip(shipId)
+	local levels = def and state.owned[shipId]
+	local stats = levels and ShipData.ComputeStats(shipId, levels)
+
+	if not def or not stats then
+		self._shipName.Text = "—"
+		self._shipRarity.Text = ""
+		self._shipPlaceholder.Visible = true
+		for _, entry in self._shipLines do
+			entry.row.Visible = false
+		end
+		return
+	end
+
+	local rarity = ShipData.GetRarity(shipId)
+	self._shipRarity.Text = spaced(upper(rarity.name)) .. "  ·  " .. spaced(upper(ShipData.GetTypeName(def.shipType)))
+	self._shipRarity.TextColor3 = rarity.color
+	self._shipName.Text = string.format("%s  ·  T%d", def.displayName, def.tier)
+	self._shipViewportStroke.Color = rarity.color
+	self._shipViewportStroke.Transparency = RARITY_LINE
+
+	local n = formatStat
+	local rows = {
+		{ "Velocidade", n(stats.speed) .. " u/s" },
+		{ "Manobra", n(stats.turnSpeed) },
+		{ "Dano", if stats.gunsEnabled then n(stats.damage) else "—" },
+		{ "Tiros / resfriar", if stats.gunsEnabled then string.format("%d / %ss", stats.maxShots, n(stats.cooldownTime)) else "—" },
+		{ "Cadência", if stats.gunsEnabled then string.format("%.2fs por tiro", stats.fireRate) else "—" },
+		{ "Mineração", n(stats.miningQuality) },
+		{ "Casco", n(stats.maxHull) },
+		{ "Warp", if stats.warpRange <= 0 then "Ilimitado" else n(stats.warpRange) .. " studs" },
+		{ "Carga do warp", n(stats.warpChargeTime) .. "s" },
+	}
+	for _, moduleId in ShipData.MODULE_ORDER do
+		local max = ShipData.GetMaxModuleLevel(shipId, moduleId)
+		table.insert(rows, {
+			ShipData.Modules[moduleId].name,
+			if max > 0 then string.format("Nv %d / %d", levels[moduleId], max) else "—",
+		})
+	end
+
+	for i, entry in self._shipLines do
+		local data = rows[i]
+		entry.row.Visible = data ~= nil
+		if data then
+			entry.label.Text = data[1]
+			entry.value.Text = data[2]
+		end
+	end
+
+	if self._shipModelId ~= shipId then
+		self._shipModelId = shipId
+		self._shipModel = ShipViewport.Mount(self._shipViewport, shipId)
+		self._shipSpin = 0
+	end
+	self._shipPlaceholder.Visible = self._shipModel == nil
+end
+
+function InventoryHUD:_clearShipTab()
+	if self._shipViewport then
+		ShipViewport.Clear(self._shipViewport)
+	end
+	self._shipModel = nil
+	self._shipModelId = nil
+end
+
+--- Estado das naves vindo do ShipService (via ShipController).
+function InventoryHUD:SetShipInfo(state)
+	self._shipState = state
+	if self._isOpen and self._activeTab == SHIP_TAB then
+		self:_renderShipTab()
+	end
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -1408,7 +1618,19 @@ function InventoryHUD:_selectTab(index: number)
 		tab.indicator.Visible = isActive
 	end
 
-	-- TODO: filtrar conteúdo da grid por tab (Itens/Traje/Nave)
+	-- Aba Nave troca grid + preview pela ficha da nave
+	local shipTab = index == SHIP_TAB
+	self._gridScroll.Visible = not shipTab
+	self._previewSection.Visible = not shipTab
+	self._bodyDivider.Visible = not shipTab
+	if self._shipTab then
+		self._shipTab.Visible = shipTab
+		if shipTab and self._isOpen then
+			self:_renderShipTab()
+		end
+	end
+
+	-- TODO: filtrar conteúdo da grid por tab (Itens/Traje)
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -1470,6 +1692,9 @@ function InventoryHUD:Toggle()
 		-- Com a GUI desligada o AbsoluteSize pode não ter sido medido ainda
 		self:_applyFullLayout()
 		self:_refreshPreview(true)
+		if self._activeTab == SHIP_TAB then
+			self:_renderShipTab()
+		end
 
 		self._fullBg.BackgroundTransparency = 1
 		self._fullPanel.GroupTransparency = 1
@@ -1507,6 +1732,7 @@ function InventoryHUD:Toggle()
 				self._fullGui.Enabled = false
 				-- A cópia do personagem não precisa ficar viva com o painel fechado
 				self:_clearPreview()
+				self:_clearShipTab()
 			end
 		end)
 	end
@@ -1577,6 +1803,11 @@ function InventoryHUD:_animateFx(dt: number)
 		animateRarityFx(slot, pulse, shineRotation)
 	end
 	animateRarityFx(self._previewFx, pulse, shineRotation)
+
+	if self._shipModel and self._activeTab == SHIP_TAB then
+		self._shipSpin = ((self._shipSpin or 0) + dt * SHIP_SPIN) % (2 * math.pi)
+		self._shipModel:PivotTo(CFrame.Angles(0, self._shipSpin, 0))
+	end
 
 	if self._previewModel and self._previewSpinSpeed > 0 then
 		self._previewSpin = (self._previewSpin + dt * self._previewSpinSpeed) % (2 * math.pi)

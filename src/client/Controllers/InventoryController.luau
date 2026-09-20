@@ -162,6 +162,11 @@ function InventoryController:GetEquippedSlot(): number
 	return self._equippedSlot or 0
 end
 
+--- Estado das naves pra aba "Nave" (somente leitura). Chamado pelo ShipController.
+function InventoryController:SetShipInfo(state)
+	self._hud:SetShipInfo(state)
+end
+
 function InventoryController:GetInventory()
 	return self._inventory
 end

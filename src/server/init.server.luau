@@ -2,12 +2,14 @@ local Knit = require(game:GetService("ReplicatedStorage").Packages.Knit)
 local Players = game:GetService("Players")
 
 -- Services
+require(script.Services.PlayerDataService)
 require(script.Services.LumenService)
 require(script.Services.InventoryService)
 require(script.Services.HealthService)
 require(script.Services.GravityService)
 require(script.Services.MiningService)
 require(script.Services.ToolService)
+require(script.Services.ShipService)
 
 -- Start Knit
 Knit.Start():catch(warn):await()

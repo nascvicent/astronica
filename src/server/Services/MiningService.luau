@@ -20,6 +20,7 @@ local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LaserConfig = require(ReplicatedStorage.Shared.LaserConfig)
+local ShipData = require(ReplicatedStorage.Shared.ShipData)
 
 local NODE_TAG = LaserConfig.NODE_TAG
 
@@ -59,6 +60,11 @@ local BEAM_TIMEOUT = LaserConfig.TICK_RATE * 4
 -- Nodes
 -- ═══════════════════════════════════════════════════════════
 
+--- miningQuality da nave equipada do jogador (§2.2).
+function MiningService:_getMiningQuality(player: Player): number
+	return if self._ships then self._ships:GetMiningQuality(player) else 0
+end
+
 function MiningService:_registerNode(node: Instance)
 	if not node:IsA("BasePart") then
 		return
@@ -89,6 +95,11 @@ end
 
 function MiningService:_depleteNode(player: Player, node: BasePart, state)
 	local amount = math.random(state.def.dropMin, state.def.dropMax)
+
+	-- Broca da nave equipada: chance de uma unidade a mais
+	if math.random() < ShipData.ExtraUnitChance(self:_getMiningQuality(player)) then
+		amount += 1
+	end
 
 	local ok, msg = self._inventory:AddItem(player, state.itemId, amount)
 	if not ok then
@@ -241,7 +252,9 @@ function MiningService:_resolveHit(player: Player, result: RaycastResult, mode, 
 
 	-- Node de recurso
 	if mode.CanMine and self._nodes[hit] then
-		self:_damageNode(player, hit, damage)
+		-- Tempo de mineração menor = mais dano por segundo no node
+		local timeMultiplier = ShipData.MiningTimeMultiplier(self:_getMiningQuality(player))
+		self:_damageNode(player, hit, damage / timeMultiplier)
 		return
 	end
 
@@ -282,6 +295,7 @@ end
 
 function MiningService:KnitStart()
 	self._inventory = Knit.GetService("InventoryService")
+	self._ships = Knit.GetService("ShipService")
 
 	self.Client.FireLaser:Connect(function(player, aimPoint, modeName)
 		self:_onFire(player, aimPoint, modeName)

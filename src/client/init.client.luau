@@ -6,6 +6,8 @@ require(script.Controllers.InventoryController)
 require(script.Controllers.HealthController)
 require(script.Controllers.LaserToolController)
 require(script.Controllers.SprintController)
+require(script.Controllers.ShipController)
+require(script.Controllers.HangarAmbienceController)
 
 -- Start Knit
 Knit.Start():catch(warn):await()
