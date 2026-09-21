@@ -58,9 +58,15 @@ local BOOST_DEST_FRACTION = 0.5 -- nunca passa da metade do caminho até o desti
 local BOOST_SAFETY_MARGIN = 80 -- folga antes de qualquer obstáculo
 local BOOST_LOOKAHEAD = 0.4 -- quanto tempo à frente o frame confere
 local BOOST_BRAKE_TIME = 0.25 -- freia pra parar no fim do orçamento, não bater nele
-local BOOST_END_EARLY = 0.1 -- devolve o controle um pouco antes do teleporte
 -- Salto de posição maior que isso num frame = o PivotTo do servidor chegou
 local BOOST_TELEPORT_JUMP = 250
+-- Se o teleporte não chegar nesse tempo além do previsto, solta a arrancada
+local BOOST_TELEPORT_TIMEOUT = 1
+
+-- Depois de chegar, o eixo continua travado por este tempo, com a nave parada
+-- de frente: dá tempo da velocidade do kit de voo assentar antes do piloto
+-- voltar a mandar
+local ARRIVAL_HOLD = 1
 
 local MESSAGES = {
 	OK = "Pronto.",
@@ -668,7 +674,13 @@ function ShipController:_onWarpStatus(status: string, info)
 		end
 		self:_startBoost(jumpAt)
 	elseif status == "completed" then
-		self:_stopAlign()
+		-- Normalmente a trava da chegada já está correndo (começa no teleporte);
+		-- se o teleporte não foi visto, ela começa agora
+		local align = self._align
+		if align and not align.releaseAt then
+			align.boost = nil
+			align.releaseAt = os.clock() + ARRIVAL_HOLD
+		end
 		self._warp:SetCharging(nil)
 		self._warp:ShowMessage("Chegada: " .. string.upper(tostring(destinationId)), false)
 	elseif status == "cancelled" then
@@ -731,13 +743,27 @@ function ShipController:_stepAlign(dt: number)
 		return
 	end
 
-	local offset = align.target - body.Position
-	if offset.Magnitude < 1 then
-		return -- em cima do marcador: não há direção pra apontar
+	if align.releaseAt and os.clock() >= align.releaseAt then
+		self:_stopAlign() -- fim da trava da chegada: o piloto volta a mandar
+		return
+	end
+
+	-- Na carga a nave mira o PONTO do marcador. Da viagem em diante mira um
+	-- RUMO fixo: depois do teleporte ela chega ainda embalada, passa do
+	-- marcador, e "olhar pro marcador" viraria olhar pra trás — era o giro de
+	-- 180° na chegada.
+	local desired
+	if align.heading then
+		desired = CFrame.lookAt(Vector3.zero, align.heading).Rotation
+	else
+		local offset = align.target - body.Position
+		if offset.Magnitude < 1 then
+			return -- em cima do marcador: não há direção pra apontar
+		end
+		desired = CFrame.lookAt(body.Position, align.target).Rotation
 	end
 
 	local rate = if align.locked then TRAVEL_ALIGN_RATE else ALIGN_RATE
-	local desired = CFrame.lookAt(body.Position, align.target).Rotation
 	align.current = align.current:Lerp(desired, 1 - math.exp(-dt * rate))
 	gyro.CFrame = align.current
 
@@ -790,7 +816,13 @@ function ShipController:_startBoost(jumpAt: number)
 	align.locked = true
 
 	local ship, body = align.ship, align.body
-	local direction = align.current.LookVector
+
+	-- O rumo trava aqui, na direção do marcador vista de onde a nave está. O
+	-- servidor calcula a chegada sobre essa mesma linha, então ela chega
+	-- apontando pra onde já estava indo.
+	local toMarker = align.target - body.Position
+	align.heading = if toMarker.Magnitude > 1 then toMarker.Unit else align.current.LookVector
+	local direction = align.heading
 
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
@@ -808,7 +840,7 @@ function ShipController:_startBoost(jumpAt: number)
 
 	-- Cruzeiro que cobre o orçamento no tempo que tem (a rampa quadrática
 	-- anda 1/3 do que andaria em velocidade cheia)
-	local duration = math.max(jumpAt - BOOST_END_EARLY, 0.2)
+	local duration = math.max(jumpAt, 0.2)
 	local startSpeed = math.max(body.AssemblyLinearVelocity:Dot(direction), 0)
 	local cruise = budget / math.max(duration - BOOST_RAMP * 2 / 3, 0.2)
 	cruise = math.min(math.max(cruise, startSpeed), BOOST_MAX_SPEED)
@@ -832,10 +864,24 @@ function ShipController:_stepBoost(align, boost)
 	local moved = position - boost.lastPosition
 	boost.lastPosition = position
 
-	-- Acabou o tempo, ou o PivotTo do servidor chegou: para de escrever e a
-	-- velocidade volta a ser do kit de voo
+	-- O PivotTo do servidor chegou: a nave chega PARADA e de frente, e o eixo
+	-- segue travado por ARRIVAL_HOLD. Antes a arrancada soltava a velocidade
+	-- um pouco antes do teleporte e a nave chegava embalada.
+	if moved.Magnitude > BOOST_TELEPORT_JUMP then
+		align.boost = nil
+		align.releaseAt = os.clock() + ARRIVAL_HOLD
+		body.AssemblyLinearVelocity = Vector3.zero
+		body.AssemblyAngularVelocity = Vector3.zero
+		local mover = body:FindFirstChildWhichIsA("BodyVelocity")
+		if mover then
+			mover.Velocity = Vector3.zero
+		end
+		return
+	end
+
+	-- O teleporte não veio (warp caiu no servidor): solta sem esperar mais
 	local elapsed = os.clock() - boost.started
-	if elapsed >= boost.duration or moved.Magnitude > BOOST_TELEPORT_JUMP then
+	if elapsed >= boost.duration + BOOST_TELEPORT_TIMEOUT then
 		align.boost = nil
 		return
 	end
