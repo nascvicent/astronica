@@ -98,6 +98,7 @@ local Codes = {
 	WARP_OUT_OF_RANGE = "WARP_OUT_OF_RANGE",
 	WARP_ALREADY_CHARGING = "WARP_ALREADY_CHARGING",
 	WARP_INTERRUPTED = "WARP_INTERRUPTED",
+	WARP_SHIP_DOCKED = "WARP_SHIP_DOCKED",
 	NOT_IMPLEMENTED = "NOT_IMPLEMENTED",
 }
 
@@ -131,6 +132,7 @@ local ShipService = Knit.CreateService({
 	_slots = {} :: { [number]: number }, -- userId → posição no LandingPad
 	_lastAction = {} :: { [number]: number },
 	_warps = {} :: { [number]: any },
+	_travels = {} :: { [number]: boolean }, -- dentro do túnel: não aceita outro warp
 	_arrivals = {} :: { [number]: string }, -- marcador orbital de chegada (teleporte)
 	_placedOnLanding = {} :: { [number]: boolean },
 })
@@ -1082,6 +1084,9 @@ function ShipService:_dock(player: Player, record: ShipRecord, pad: BasePart)
 
 	self:_applyDockedPhysics(record)
 
+	-- Mesma regra do RequestWarp: ancorou no meio da carga, o warp cai
+	self:_cancelWarp(player, Codes.WARP_SHIP_DOCKED)
+
 	record.docked = true
 	record.pad = pad
 	self._padOwners[pad] = player.UserId
@@ -1589,8 +1594,13 @@ function ShipService:RequestWarp(player: Player, destinationId: any): (boolean, 
 	if not self:_isPiloting(player, model) then
 		return false, Codes.NOT_PILOTING
 	end
-	if self._warps[userId] then
+	if self._warps[userId] or self._travels[userId] then
 		return false, Codes.WARP_ALREADY_CHARGING
+	end
+	-- Ancorada no pad: o teleporte arrancaria a nave do hangar presa
+	local record = self._ships[userId]
+	if record and record.docked then
+		return false, Codes.WARP_SHIP_DOCKED
 	end
 
 	local destination = WarpModule.GetDestination(destinationId)
@@ -1642,16 +1652,7 @@ function ShipService:RequestWarp(player: Player, destinationId: any): (boolean, 
 				return
 			end
 
-			local arrival = WarpModule.GetArrivalCFrame(getShipPosition(model), target.part)
-			model:PivotTo(arrival)
-			for _, part in model:GetDescendants() do
-				if part:IsA("BasePart") then
-					part.AssemblyLinearVelocity = Vector3.zero
-					part.AssemblyAngularVelocity = Vector3.zero
-				end
-			end
-
-			self.Client.WarpStatus:Fire(player, "completed", { destinationId = destination.id })
+			self:_travel(player, model, destination.id)
 		end,
 		onCancel = function(reason)
 			if healthConn then
@@ -1668,6 +1669,57 @@ function ShipService:RequestWarp(player: Player, destinationId: any): (boolean, 
 	self.Client.WarpStatus:Fire(player, "charging", info)
 
 	return true, Codes.OK
+end
+
+--[[
+	Viagem: o trecho em que o piloto está dentro do túnel.
+
+	O salto continua sendo um PivotTo só, mas ele cai no FIM da viagem, coberto
+	pelo flash do WarpTunnel — é o clímax, e é onde o estouro toca. Depois dele
+	sobra só a dissolução do túnel. Aqui já não dá pra cancelar: quem
+	interrompe interrompe a carga, não o salto.
+]]
+function ShipService:_travel(player: Player, model: Model, destinationId: string)
+	local userId = player.UserId
+	self._travels[userId] = true
+
+	self.Client.WarpStatus:Fire(player, "travelling", {
+		destinationId = destinationId,
+		travelTime = WarpModule.TRAVEL_TIME,
+		-- Quando a nave troca de lugar: o client casa o flash e o estouro com
+		-- esse instante, em vez de chutar o fim do túnel
+		jumpAt = WarpModule.TRAVEL_JUMP_AT,
+	})
+
+	task.delay(WarpModule.TRAVEL_JUMP_AT, function()
+		if not player.Parent then
+			self._travels[userId] = nil
+			return
+		end
+
+		-- Revalida de novo: entre a carga cheia e o salto passou mais um tempo
+		local target = WarpModule.GetDestination(destinationId)
+		if not target or not model.Parent or self:_getModel(player) ~= model then
+			self._travels[userId] = nil
+			self.Client.WarpStatus:Fire(player, "cancelled", { destinationId = destinationId, reason = Codes.WARP_INTERRUPTED })
+			return
+		end
+
+		model:PivotTo(WarpModule.GetArrivalCFrame(getShipPosition(model), target.part))
+		for _, part in model:GetDescendants() do
+			if part:IsA("BasePart") then
+				part.AssemblyLinearVelocity = Vector3.zero
+				part.AssemblyAngularVelocity = Vector3.zero
+			end
+		end
+
+		task.delay(WarpModule.TRAVEL_TIME - WarpModule.TRAVEL_JUMP_AT, function()
+			self._travels[userId] = nil
+			if player.Parent then
+				self.Client.WarpStatus:Fire(player, "completed", { destinationId = destinationId })
+			end
+		end)
+	end)
 end
 
 function ShipService:_cancelWarp(player: Player, reason: string)
@@ -1892,6 +1944,7 @@ function ShipService:KnitStart()
 		self._slots[userId] = nil
 		self._lastAction[userId] = nil
 		self._arrivals[userId] = nil
+		self._travels[userId] = nil
 		self._placedOnLanding[userId] = nil
 	end)
 

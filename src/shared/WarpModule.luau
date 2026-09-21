@@ -19,6 +19,18 @@ local WarpModule = {}
 -- Distância da chegada até o marcador, pra nave não nascer dentro dele
 WarpModule.ARRIVAL_OFFSET = 60
 
+--[[
+	Viagem: o trecho entre a carga cheia e a chegada, em que o piloto vê o
+	túnel (WarpTunnel).
+
+	TRAVEL_JUMP_AT é o TELEPORTE — o instante em que o PivotTo troca a nave de
+	lugar. Ele fica no fim de propósito: é o clímax da viagem, e o client
+	encaixa o flash e o estouro exatamente nele. O que vem depois
+	(TRAVEL_TIME - TRAVEL_JUMP_AT) é só o túnel se desfazendo, já no destino.
+]]
+WarpModule.TRAVEL_TIME = 4
+WarpModule.TRAVEL_JUMP_AT = 2.6
+
 export type Destination = {
 	id: string,
 	part: BasePart,

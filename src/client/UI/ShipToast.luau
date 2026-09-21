@@ -76,6 +76,10 @@ function ShipToast:Show(text: string?, color: Color3?, onActivate: (() -> ())?)
 		return
 	end
 
+	-- Show sem prazo anula o prazo de um Flash anterior: sem isso o timer
+	-- velho escondia o aviso novo (era o botão de soltar sumindo no mobile)
+	self._token = nil
+
 	self._action = onActivate
 	self._frame.Active = onActivate ~= nil
 	self._frame.AutoButtonColor = onActivate ~= nil
@@ -102,6 +106,10 @@ function ShipToast:Hide()
 	self._text = nil
 	self._action = nil
 	self._gui.Enabled = false
+end
+
+function ShipToast:IsShowing(): boolean
+	return self._gui.Enabled
 end
 
 --- Mostra por alguns segundos e some sozinho (a menos que algo mostre outra
