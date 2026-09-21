@@ -8,10 +8,17 @@
 
 	Quem decide e valida é o servidor; a lista é só leitura do alcance.
 
+	Layout responsivo (_layout): botão e lista formam um bloco na direita,
+	centrado na vertical e sempre dentro da área útil. Em tela baixa (celular
+	deitado) a lista mostra menos linhas e rola, em vez de empurrar o botão
+	pra fora da tela.
+
 	Local: src/client/UI/WarpHUD.luau
 ]]
 
 local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
 
 local UIStyle = require(script.Parent.UIStyle)
 
@@ -24,6 +31,19 @@ local spaced, upper = UIStyle.spaced, UIStyle.upper
 local LIST_WIDTH = 290
 local ROW_HEIGHT = 44
 local MAX_ROWS_VISIBLE = 6
+local MIN_ROWS_VISIBLE = 2
+
+-- Layout: margem da borda, altura do botão e respiro entre botão e lista.
+-- Tela compacta (altura <= UIStyle.COMPACT_MAX_HEIGHT) aperta tudo.
+local MARGIN = 24
+local MARGIN_COMPACT = 12
+local TOGGLE_HEIGHT = 36
+local TOGGLE_HEIGHT_COMPACT = 32
+local TOGGLE_GAP = 8
+local CHARGE_WIDTH = 360
+local CHARGE_HEIGHT = 62
+local CHARGE_TOP = 70
+local MESSAGE_WIDTH = 480
 
 local WarpHUD = {}
 WarpHUD.__index = WarpHUD
@@ -42,6 +62,7 @@ function WarpHUD.new()
 	self._listOpen = false
 	self._rows = {}
 	self._charging = false
+	self._travelling = false
 
 	self:_build()
 	return self
@@ -61,9 +82,7 @@ function WarpHUD:_build()
 	-- Botão
 	local toggle, _ = UIStyle.button(gui, if UIStyle.IS_MOBILE then "WARP" else "WARP  [G]", false)
 	toggle.Name = "Toggle"
-	toggle.AnchorPoint = Vector2.new(1, 0.5)
-	toggle.Position = UDim2.new(1, -24, 0.5, -((ROW_HEIGHT * MAX_ROWS_VISIBLE) / 2) - 40)
-	toggle.Size = UDim2.fromOffset(if UIStyle.IS_MOBILE then 110 else 130, 36)
+	toggle.AnchorPoint = Vector2.new(1, 0)
 	toggle.BackgroundColor3 = C.plate
 	toggle.BackgroundTransparency = 0.25
 	toggle.Activated:Connect(function()
@@ -75,8 +94,6 @@ function WarpHUD:_build()
 	local list = Instance.new("ScrollingFrame")
 	list.Name = "Destinations"
 	list.AnchorPoint = Vector2.new(1, 0)
-	list.Position = UDim2.new(1, -24, 0.5, -((ROW_HEIGHT * MAX_ROWS_VISIBLE) / 2) - 14)
-	list.Size = UDim2.fromOffset(LIST_WIDTH, ROW_HEIGHT * MAX_ROWS_VISIBLE)
 	list.BackgroundColor3 = C.plate
 	list.BackgroundTransparency = 0.2
 	list.BorderSizePixel = 0
@@ -103,8 +120,6 @@ function WarpHUD:_build()
 	local charge = Instance.new("Frame")
 	charge.Name = "Charge"
 	charge.AnchorPoint = Vector2.new(0.5, 0)
-	charge.Position = UDim2.new(0.5, 0, 0, 70)
-	charge.Size = UDim2.fromOffset(360, 62)
 	charge.BackgroundColor3 = C.plate
 	charge.BackgroundTransparency = 0.2
 	charge.Visible = false
@@ -136,6 +151,7 @@ function WarpHUD:_build()
 			self._onCancel()
 		end
 	end)
+	self._cancel = cancel
 
 	local track = Instance.new("Frame")
 	track.Name = "Track"
@@ -159,8 +175,6 @@ function WarpHUD:_build()
 	-- Mensagem curta (fora de alcance, interrompido)
 	local message = UIStyle.label(gui, "Message", 14, UIStyle.FONT_BOLD, 0)
 	message.AnchorPoint = Vector2.new(0.5, 0)
-	message.Position = UDim2.new(0.5, 0, 0, 140)
-	message.Size = UDim2.fromOffset(480, 20)
 	message.TextXAlignment = Enum.TextXAlignment.Center
 	message.Visible = false
 	local messageStroke = Instance.new("UIStroke")
@@ -169,6 +183,61 @@ function WarpHUD:_build()
 	messageStroke.Transparency = 0.3
 	messageStroke.Parent = message
 	self._message = message
+
+	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		self:_layout()
+	end)
+	self:_layout()
+end
+
+--[[
+	Recalcula tudo a partir do tamanho real da tela. Roda no build e toda vez
+	que ela muda (girar o celular, redimensionar a janela).
+
+	A área útil desconta o inset do topo (barra do Roblox), porque a ScreenGui
+	usa IgnoreGuiInset e, sem isso, o botão entraria embaixo dela.
+]]
+function WarpHUD:_layout()
+	local size = self._gui.AbsoluteSize
+	if size.X <= 0 or size.Y <= 0 then
+		return -- ainda sem tamanho (primeiro frame)
+	end
+
+	local compact = size.Y <= UIStyle.COMPACT_MAX_HEIGHT
+	local margin = if compact then MARGIN_COMPACT else MARGIN
+	local toggleHeight = if compact then TOGGLE_HEIGHT_COMPACT else TOGGLE_HEIGHT
+	local inset = GuiService:GetGuiInset().Y
+	local top = inset + margin
+	local bottom = size.Y - margin
+	local available = bottom - top
+
+	-- Quantas linhas cabem depois do botão; a lista rola o resto
+	local rows = math.floor((available - toggleHeight - TOGGLE_GAP) / ROW_HEIGHT)
+	rows = math.clamp(rows, MIN_ROWS_VISIBLE, MAX_ROWS_VISIBLE)
+	local listHeight = rows * ROW_HEIGHT
+	local blockHeight = toggleHeight + TOGGLE_GAP + listHeight
+
+	-- Bloco centrado na vertical, mas preso dentro da área útil
+	local blockTop = math.floor((size.Y - blockHeight) / 2)
+	blockTop = math.clamp(blockTop, top, math.max(bottom - blockHeight, top))
+
+	local toggleWidth = if UIStyle.IS_MOBILE then 110 else 130
+	self._toggle.Position = UDim2.new(1, -margin, 0, blockTop)
+	self._toggle.Size = UDim2.fromOffset(toggleWidth, toggleHeight)
+
+	local listWidth = math.min(LIST_WIDTH, size.X - margin * 2)
+	self._list.Position = UDim2.new(1, -margin, 0, blockTop + toggleHeight + TOGGLE_GAP)
+	self._list.Size = UDim2.fromOffset(listWidth, listHeight)
+
+	-- Carga e mensagem: centradas no topo, nunca mais largas que a tela
+	local chargeTop = if compact then top else math.max(CHARGE_TOP, top)
+	self._charge.Position = UDim2.new(0.5, 0, 0, chargeTop)
+	-- Centrada, a barra não pode invadir a coluna do botão WARP na direita
+	local chargeRoom = size.X - 2 * (margin + toggleWidth + TOGGLE_GAP)
+	self._charge.Size = UDim2.fromOffset(math.clamp(chargeRoom, 200, CHARGE_WIDTH), CHARGE_HEIGHT)
+
+	self._message.Position = UDim2.new(0.5, 0, 0, chargeTop + CHARGE_HEIGHT + 8)
+	self._message.Size = UDim2.fromOffset(math.min(MESSAGE_WIDTH, size.X - margin * 2), 20)
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -285,8 +354,11 @@ end
 -- ═══════════════════════════════════════════════════════════
 
 function WarpHUD:SetCharging(destinationId: string?)
+	self:_stopTravelTween()
 	self._charging = destinationId ~= nil
+	self._travelling = false
 	self._charge.Visible = self._charging
+	self._cancel.Visible = true
 	if destinationId then
 		self._chargeLabel.Text = spaced("WARP") .. "  →  " .. spaced(upper(destinationId))
 		self._chargeFill.Size = UDim2.fromScale(0, 1)
@@ -294,12 +366,42 @@ function WarpHUD:SetCharging(destinationId: string?)
 	end
 end
 
+--- Dentro do túnel: a barra vira contagem de chegada e não dá mais pra cancelar.
+function WarpHUD:SetTravelling(destinationId: string, duration: number)
+	self:_stopTravelTween()
+	self._charging = true
+	self._travelling = true
+	self._charge.Visible = true
+	self._cancel.Visible = false
+	self._chargeLabel.Text = spaced("SALTO") .. "  →  " .. spaced(upper(destinationId))
+	self._chargeFill.Size = UDim2.fromScale(0, 1)
+	self:SetListOpen(false)
+
+	self._travelTween = TweenService:Create(
+		self._chargeFill,
+		TweenInfo.new(math.max(duration, 0.01), Enum.EasingStyle.Linear),
+		{ Size = UDim2.fromScale(1, 1) }
+	)
+	self._travelTween:Play()
+end
+
+function WarpHUD:_stopTravelTween()
+	if self._travelTween then
+		self._travelTween:Cancel()
+		self._travelTween = nil
+	end
+end
+
 function WarpHUD:SetProgress(alpha: number)
+	if self._travelling then
+		return
+	end
 	self._chargeFill.Size = UDim2.fromScale(math.clamp(alpha, 0, 1), 1)
 end
 
+--- Só a carga é cancelável; o salto, não.
 function WarpHUD:IsCharging(): boolean
-	return self._charging
+	return self._charging and not self._travelling
 end
 
 function WarpHUD:ShowMessage(text: string, isError: boolean?)
@@ -335,6 +437,10 @@ function WarpHUD:SetVisible(visible: boolean)
 	end
 	self._visible = visible
 	self._gui.Enabled = visible
+	if visible then
+		-- A tela pode ter girado com a HUD escondida
+		self:_layout()
+	end
 	if not visible then
 		self:SetListOpen(false)
 		self:SetCharging(nil)

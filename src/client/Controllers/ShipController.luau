@@ -27,6 +27,7 @@ local ShipPrompts = require(UI.ShipPrompts)
 local ShipMenuHUD = require(UI.ShipMenuHUD)
 local HangarHUD = require(UI.HangarHUD)
 local WarpHUD = require(UI.WarpHUD)
+local WarpTunnel = require(UI.WarpTunnel)
 local ShipToast = require(UI.ShipToast)
 local UIStyle = require(UI.UIStyle)
 
@@ -39,6 +40,27 @@ local DESTINATIONS_REFRESH = 0.25
 -- Brilho da carga do warp, visível pra todo mundo por perto
 local WARP_FX_COLOR = Color3.fromHex("#45C7FF")
 local WARP_FX_LIGHT_RANGE = 24
+
+-- Velocidade com que a nave vira pro destino durante a carga, em 1/s. Baixo
+-- de propósito: o giro é parte do "carregando", não um snap.
+local ALIGN_RATE = 1.2
+-- Na viagem o eixo trava de vez: fecha o que sobrou da carga e não deixa o
+-- mouse virar a nave
+local TRAVEL_ALIGN_RATE = 5
+
+-- Arrancada: até o teleporte a nave anda DE VERDADE, pra paisagem passar.
+-- Tudo em studs e segundos.
+local BOOST_MAX_SPEED = 650
+local BOOST_RAMP = 0.9 -- tempo até a velocidade de cruzeiro
+-- Teto da distância. Também é o teto do Spherecast (1024), então não sobe
+local BOOST_MAX_DISTANCE = 1000
+local BOOST_DEST_FRACTION = 0.5 -- nunca passa da metade do caminho até o destino
+local BOOST_SAFETY_MARGIN = 80 -- folga antes de qualquer obstáculo
+local BOOST_LOOKAHEAD = 0.4 -- quanto tempo à frente o frame confere
+local BOOST_BRAKE_TIME = 0.25 -- freia pra parar no fim do orçamento, não bater nele
+local BOOST_END_EARLY = 0.1 -- devolve o controle um pouco antes do teleporte
+-- Salto de posição maior que isso num frame = o PivotTo do servidor chegou
+local BOOST_TELEPORT_JUMP = 250
 
 local MESSAGES = {
 	OK = "Pronto.",
@@ -72,6 +94,7 @@ local MESSAGES = {
 	WARP_OUT_OF_RANGE = "Fora do alcance do warp. Voe mais perto.",
 	WARP_ALREADY_CHARGING = "O warp já está carregando.",
 	WARP_INTERRUPTED = "Warp interrompido.",
+	WARP_SHIP_DOCKED = "Desancore a nave antes de warpar.",
 	CANCELLED = "Warp cancelado.",
 	NOT_IMPLEMENTED = "Em breve.",
 }
@@ -100,6 +123,7 @@ function ShipController:KnitInit()
 	self._menu = ShipMenuHUD.new()
 	self._hangar = HangarHUD.new()
 	self._warp = WarpHUD.new()
+	self._tunnel = WarpTunnel.new()
 	self._toast = ShipToast.new()
 end
 
@@ -458,7 +482,11 @@ function ShipController:_updateDockToast(ship: Model?)
 		-- soltar (no mobile é o único, já que lá não há tecla). Fora do assento
 		-- ele é só confirmação e some sozinho.
 		local state = if self._seated then "dockedSeated" else "docked"
-		if state ~= previous then
+		-- Com o piloto dentro o botão de soltar tem que estar SEMPRE lá: se algo
+		-- tirou ele da tela (um aviso de erro por cima, um Flash antigo que
+		-- venceu), volta no frame seguinte
+		local lost = state == "dockedSeated" and not self._toast:IsShowing()
+		if state ~= previous or lost then
 			self._dockState = state
 			if state == "dockedSeated" then
 				self._toast:Show(
@@ -621,13 +649,229 @@ function ShipController:_onWarpStatus(status: string, info)
 
 	if status == "charging" then
 		self._warp:SetCharging(destinationId)
+		self._tunnel:SetShip(self:GetOwnShip())
+		-- A carga varia por nave: o túnel usa ela pra casar o segundo 12 da
+		-- trilha com o teleporte
+		local chargeTime = (typeof(info) == "table" and tonumber(info.chargeTime)) or 0
+		self._tunnel:BeginCharge(chargeTime, WarpModule.TRAVEL_JUMP_AT)
+		self:_startAlign(destinationId)
+	elseif status == "travelling" then
+		-- Daqui até "completed" a tela é do túnel; o PivotTo cai em jumpAt.
+		-- O eixo continua travado (agora mais firme) e a nave arranca até lá.
+		local travelTime = (typeof(info) == "table" and info.travelTime) or WarpModule.TRAVEL_TIME
+		local jumpAt = (typeof(info) == "table" and info.jumpAt) or WarpModule.TRAVEL_JUMP_AT
+		self._warp:SetTravelling(tostring(destinationId), travelTime)
+		self._tunnel:SetShip(self:GetOwnShip())
+		self._tunnel:Play(travelTime, jumpAt)
+		if not self._align then
+			self:_startAlign(destinationId) -- a carga pode ter vindo antes da nave carregar
+		end
+		self:_startBoost(jumpAt)
 	elseif status == "completed" then
+		self:_stopAlign()
 		self._warp:SetCharging(nil)
 		self._warp:ShowMessage("Chegada: " .. string.upper(tostring(destinationId)), false)
 	elseif status == "cancelled" then
+		self:_stopAlign()
 		self._warp:SetCharging(nil)
+		self._tunnel:Stop()
 		self._warp:ShowMessage(message(info and info.reason), true)
 	end
+end
+
+--[[
+	Alinhamento da carga: a nave vira devagar até apontar pro destino.
+
+	Quem gira é o BodyGyro do próprio kit de voo — a gente só move o ALVO dele,
+	e devagar. Sai suave de graça, a física continua sendo a do PlaneScript, e
+	como o piloto tem a posse de rede da nave, os outros jogadores veem o giro
+	acontecer (é a leitura de "aquela nave vai saltar pra lá", §3.4).
+
+	Roda no Stepped, logo antes do passo de física: mesmo que o LocalPlaneScript
+	escreva o gyro no RenderStepped ou no Heartbeat, o último valor a valer no
+	passo é o nosso.
+]]
+function ShipController:_startAlign(destinationId: string?)
+	self:_stopAlign()
+
+	local ship = self:GetOwnShip()
+	local destination = if typeof(destinationId) == "string" then WarpModule.GetDestination(destinationId) else nil
+	local body = ship and ship:FindFirstChild(ShipData.PARTS.body)
+	if not ship or not destination or not body or not body:IsA("BasePart") then
+		return
+	end
+
+	self._align = {
+		ship = ship,
+		body = body :: BasePart,
+		target = destination.position,
+		current = body.CFrame.Rotation,
+	}
+	self._alignConn = RunService.Stepped:Connect(function(_, dt)
+		self:_stepAlign(dt)
+	end)
+end
+
+function ShipController:_stepAlign(dt: number)
+	local align = self._align
+	if not align then
+		return
+	end
+
+	local body = align.body
+	if not body.Parent or not align.ship.Parent then
+		self:_stopAlign()
+		return
+	end
+
+	-- Sem gyro o loop de voo não está rodando (ainda ou mais): não força nada,
+	-- girar a nave na unha brigaria com a física
+	local gyro = body:FindFirstChildWhichIsA("BodyGyro")
+	if not gyro then
+		return
+	end
+
+	local offset = align.target - body.Position
+	if offset.Magnitude < 1 then
+		return -- em cima do marcador: não há direção pra apontar
+	end
+
+	local rate = if align.locked then TRAVEL_ALIGN_RATE else ALIGN_RATE
+	local desired = CFrame.lookAt(body.Position, align.target).Rotation
+	align.current = align.current:Lerp(desired, 1 - math.exp(-dt * rate))
+	gyro.CFrame = align.current
+
+	if align.boost then
+		self:_stepBoost(align, align.boost)
+	end
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- Arrancada do warp
+-- ═══════════════════════════════════════════════════════════
+
+--- Quanto dá pra andar em linha reta até encostar em algo, já descontada a
+--- margem. Só conta o que colide (RespectCanCollide): marcador, zona e o
+--- próprio túnel (CanQuery false) não seguram a nave.
+local function clearance(origin: Vector3, direction: Vector3, distance: number, radius: number, params: RaycastParams): number
+	if distance <= 0 then
+		return 0
+	end
+	local hit = workspace:Spherecast(origin, radius, direction * math.min(distance, BOOST_MAX_DISTANCE), params)
+	if not hit then
+		return distance
+	end
+	return math.max(hit.Distance - BOOST_SAFETY_MARGIN, 0)
+end
+
+--[[
+	A nave anda de verdade entre a entrada no túnel e o teleporte — é o que
+	faz planeta e estação passarem pela janela em vez de ficarem parados.
+
+	A distância é um ORÇAMENTO, decidido antes de sair e revisto a cada frame:
+
+	  · no máximo BOOST_MAX_DISTANCE
+	  · no máximo metade do caminho até o destino (não passa do marcador)
+	  · no máximo até BOOST_SAFETY_MARGIN antes do primeiro obstáculo na
+	    frente, medido com um Spherecast do tamanho da nave
+
+	Perto do fim do orçamento a velocidade cai sozinha (remaining / BRAKE_TIME),
+	então a nave freia em vez de bater. Com um planeta logo à frente o
+	orçamento é zero e ela simplesmente não arranca — o túnel continua igual.
+
+	Quem escreve a velocidade é o piloto, que já tem a posse de rede: é o mesmo
+	caminho que o kit de voo usa, e os outros jogadores veem a nave disparar.
+]]
+function ShipController:_startBoost(jumpAt: number)
+	local align = self._align
+	if not align then
+		return
+	end
+	align.locked = true
+
+	local ship, body = align.ship, align.body
+	local direction = align.current.LookVector
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local exclude: { Instance } = { ship }
+	if player.Character then
+		table.insert(exclude, player.Character)
+	end
+	params.FilterDescendantsInstances = exclude
+	params.RespectCanCollide = true
+
+	local radius = math.max(ship:GetExtentsSize().Magnitude / 2, 4)
+	local toTarget = (align.target - body.Position).Magnitude
+	local budget = math.min(BOOST_MAX_DISTANCE, toTarget * BOOST_DEST_FRACTION)
+	budget = clearance(body.Position, direction, budget, radius, params)
+
+	-- Cruzeiro que cobre o orçamento no tempo que tem (a rampa quadrática
+	-- anda 1/3 do que andaria em velocidade cheia)
+	local duration = math.max(jumpAt - BOOST_END_EARLY, 0.2)
+	local startSpeed = math.max(body.AssemblyLinearVelocity:Dot(direction), 0)
+	local cruise = budget / math.max(duration - BOOST_RAMP * 2 / 3, 0.2)
+	cruise = math.min(math.max(cruise, startSpeed), BOOST_MAX_SPEED)
+
+	align.boost = {
+		started = os.clock(),
+		duration = duration,
+		budget = budget,
+		travelled = 0,
+		lastPosition = body.Position,
+		startSpeed = startSpeed,
+		cruise = cruise,
+		radius = radius,
+		params = params,
+	}
+end
+
+function ShipController:_stepBoost(align, boost)
+	local body = align.body
+	local position = body.Position
+	local moved = position - boost.lastPosition
+	boost.lastPosition = position
+
+	-- Acabou o tempo, ou o PivotTo do servidor chegou: para de escrever e a
+	-- velocidade volta a ser do kit de voo
+	local elapsed = os.clock() - boost.started
+	if elapsed >= boost.duration or moved.Magnitude > BOOST_TELEPORT_JUMP then
+		align.boost = nil
+		return
+	end
+
+	local direction = align.current.LookVector
+	boost.travelled += math.max(moved:Dot(direction), 0)
+
+	local ramp = math.min(elapsed / BOOST_RAMP, 1)
+	local speed = boost.startSpeed + (boost.cruise - boost.startSpeed) * ramp * ramp
+
+	-- Olha um pouco à frente: obstáculo que apareceu agora (outra nave
+	-- cruzando) encurta o orçamento, e a frenagem abaixo cuida do resto
+	local lookahead = speed * BOOST_LOOKAHEAD + BOOST_SAFETY_MARGIN
+	local room = clearance(position, direction, lookahead, boost.radius, boost.params)
+	if room < lookahead then
+		boost.budget = math.min(boost.budget, boost.travelled + room)
+	end
+
+	local remaining = math.max(boost.budget - boost.travelled, 0)
+	speed = math.min(speed, remaining / BOOST_BRAKE_TIME)
+
+	local velocity = direction * speed
+	body.AssemblyLinearVelocity = velocity
+	-- O BodyVelocity do kit puxaria de volta pro throttle do piloto
+	local mover = body:FindFirstChildWhichIsA("BodyVelocity")
+	if mover then
+		mover.Velocity = velocity
+	end
+end
+
+function ShipController:_stopAlign()
+	if self._alignConn then
+		self._alignConn:Disconnect()
+		self._alignConn = nil
+	end
+	self._align = nil
 end
 
 function ShipController:_refreshDestinations(ship: Model)
@@ -667,6 +911,7 @@ function ShipController:_bindWarpFx()
 		self._warpFx[model] = fx
 
 		local function apply()
+			local mine = model:GetAttribute(ShipData.OWNER_ATTRIBUTE) == player.UserId
 			local alpha = model:GetAttribute(ShipData.WARP_CHARGE_ATTRIBUTE)
 			if typeof(alpha) ~= "number" then
 				if fx.highlight then
@@ -676,6 +921,9 @@ function ShipController:_bindWarpFx()
 				if fx.light then
 					fx.light:Destroy()
 					fx.light = nil
+				end
+				if mine then
+					self._tunnel:SetCharge(0)
 				end
 				return
 			end
@@ -707,8 +955,10 @@ function ShipController:_bindWarpFx()
 				fx.light.Brightness = 4 * alpha
 			end
 
-			if model:GetAttribute(ShipData.OWNER_ATTRIBUTE) == player.UserId then
+			if mine then
 				self._warp:SetProgress(alpha)
+				-- Build-up na tela do piloto: o túnel já começa a insinuar
+				self._tunnel:SetCharge(alpha)
 			end
 		end
 
