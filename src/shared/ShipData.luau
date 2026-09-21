@@ -313,7 +313,7 @@ ShipData.Ships.deimos = {
 		fireRate = 0.15,
 	},
 	gunsEnabled = true,
-	warp = { range = 1500, chargeTime = 2 },
+	warp = { range = 3500, chargeTime = 2 },
 	cost = { lumens = 400 },
 	unlockRequirement = nil,
 	maxModuleLevel = { engine = 3, weapon = 3, drill = 4, plating = 3 },
