@@ -278,7 +278,7 @@ ShipData.Ships.dispatcher = {
 		damage = 40,
 		speed = 115,
 		miningQuality = 35,
-		hull = 85,
+		hull = 70,
 		turnSpeed = 25,
 		maxShots = 16,
 		cooldownTime = 3.5,
@@ -288,7 +288,7 @@ ShipData.Ships.dispatcher = {
 	warp = { range = 40000, chargeTime = 6 },
 	cost = { lumens = 0 },
 	unlockRequirement = nil,
-	maxModuleLevel = { engine = 4, weapon = 4, drill = 4, plating = 4 },
+	maxModuleLevel = { engine = 4, weapon = 4, drill = 4, plating = 3 },
 }
 
 -- Mineradora de entrada: extrai muito melhor que a Dispatcher e se defende em
@@ -306,7 +306,7 @@ ShipData.Ships.deimos = {
 		damage = 25,
 		speed = 100,
 		miningQuality = 45,
-		hull = 70,
+		hull = 85,
 		turnSpeed = 25,
 		maxShots = 10,
 		cooldownTime = 5,
@@ -316,7 +316,7 @@ ShipData.Ships.deimos = {
 	warp = { range = 10000, chargeTime = 2 },
 	cost = { lumens = 400 },
 	unlockRequirement = nil,
-	maxModuleLevel = { engine = 3, weapon = 3, drill = 4, plating = 3 },
+	maxModuleLevel = { engine = 3, weapon = 3, drill = 4, plating = 4 },
 }
 
 for tier = 1, 4 do
