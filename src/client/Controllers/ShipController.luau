@@ -21,6 +21,7 @@ local ShipData = require(ReplicatedStorage.Shared.ShipData)
 local PlaceConfig = require(ReplicatedStorage.Shared.PlaceConfig)
 local WarpModule = require(ReplicatedStorage.Shared.WarpModule)
 local InventoryModule = require(ReplicatedStorage.Shared.InventoryModule)
+local MapConfig = require(ReplicatedStorage.Shared.MapConfig)
 
 local UI = script.Parent.Parent.UI
 local ShipPrompts = require(UI.ShipPrompts)
@@ -28,6 +29,7 @@ local ShipMenuHUD = require(UI.ShipMenuHUD)
 local HangarHUD = require(UI.HangarHUD)
 local WarpHUD = require(UI.WarpHUD)
 local WarpTunnel = require(UI.WarpTunnel)
+local WarpAimHUD = require(UI.WarpAimHUD)
 local ShipToast = require(UI.ShipToast)
 local UIStyle = require(UI.UIStyle)
 
@@ -68,6 +70,12 @@ local BOOST_TELEPORT_TIMEOUT = 1
 -- voltar a mandar
 local ARRIVAL_HOLD = 1
 
+-- Mirar num marcador de warp: ângulo (graus) entre o centro da câmera e o
+-- marcador pra ele virar alvo, e o ângulo maior pra continuar sendo (sem
+-- piscar na borda). Abaixo de WarpModule.MIN_DISTANCE não oferece: é voar.
+local AIM_ENTER_ANGLE = 5
+local AIM_KEEP_ANGLE = 8
+
 local MESSAGES = {
 	OK = "Pronto.",
 	NOT_LOADED = "Dados ainda carregando. Tente de novo.",
@@ -98,6 +106,7 @@ local MESSAGES = {
 	NOT_PILOTING = "Você precisa estar pilotando.",
 	WARP_NO_DESTINATION = "Destino inválido.",
 	WARP_OUT_OF_RANGE = "Fora do alcance do warp. Voe mais perto.",
+	WARP_TOO_CLOSE = "Perto demais pra warpar. Siga voando.",
 	WARP_ALREADY_CHARGING = "O warp já está carregando.",
 	WARP_INTERRUPTED = "Warp interrompido.",
 	WARP_SHIP_DOCKED = "Desancore a nave antes de warpar.",
@@ -130,6 +139,8 @@ function ShipController:KnitInit()
 	self._hangar = HangarHUD.new()
 	self._warp = WarpHUD.new()
 	self._tunnel = WarpTunnel.new()
+	self._aim = WarpAimHUD.new()
+	self._destinations = {}
 	self._toast = ShipToast.new()
 end
 
@@ -288,12 +299,12 @@ function ShipController:_bindHandlers()
 		self:_refreshAimLock()
 	end)
 
-	self._warp:SetWarpHandler(function(destinationId)
-		self:RequestWarp(destinationId)
-	end)
-
 	self._warp:SetCancelHandler(function()
 		self._service:CancelWarp()
+	end)
+
+	self._aim:SetActivateHandler(function()
+		self:_activateAim()
 	end)
 end
 
@@ -606,12 +617,6 @@ end
 -- Input
 -- ═══════════════════════════════════════════════════════════
 
-local NUMBER_KEYS = {
-	[Enum.KeyCode.One] = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3,
-	[Enum.KeyCode.Four] = 4, [Enum.KeyCode.Five] = 5, [Enum.KeyCode.Six] = 6,
-	[Enum.KeyCode.Seven] = 7, [Enum.KeyCode.Eight] = 8, [Enum.KeyCode.Nine] = 9,
-}
-
 function ShipController:_bindInput()
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		if gameProcessed then
@@ -619,6 +624,10 @@ function ShipController:_bindInput()
 		end
 
 		local key = input.KeyCode
+
+		-- Com o mapa aberto o [F] é do mapa (warp pro corpo selecionado)
+		local mapController = Knit.GetController("MapController")
+		local mapOpen = mapController ~= nil and mapController:IsOpen()
 
 		-- Acelerar com a nave ancorada solta ela do pad. Espaço fica de fora de
 		-- propósito: é a tecla de sair do assento, e sair não é decolar.
@@ -631,12 +640,10 @@ function ShipController:_bindInput()
 			return
 		end
 
-		if key == Enum.KeyCode.G and self._warp:IsVisible() then
-			self._warp:ToggleList()
+		if key == Enum.KeyCode.F and self._aim:GetTarget() and not mapOpen then
+			self:_activateAim()
 		elseif key == Enum.KeyCode.X and self._warp:IsCharging() then
 			self._service:CancelWarp()
-		elseif NUMBER_KEYS[key] and self._warp:IsVisible() then
-			self._warp:ActivateIndex(NUMBER_KEYS[key])
 		elseif key == Enum.KeyCode.Escape then
 			if self._menu:IsConfirmOpen() then
 				self._menu:CloseConfirm()
@@ -654,6 +661,11 @@ function ShipController:_onWarpStatus(status: string, info)
 	local destinationId = typeof(info) == "table" and info.destinationId or nil
 
 	if status == "charging" then
+		-- A tela vai ser do túnel: o mapa não fica por cima
+		local mapController = Knit.GetController("MapController")
+		if mapController then
+			mapController:Close()
+		end
 		self._warp:SetCharging(destinationId)
 		self._tunnel:SetShip(self:GetOwnShip())
 		-- A carga varia por nave: o túnel usa ela pra casar o segundo 12 da
@@ -920,6 +932,11 @@ function ShipController:_stopAlign()
 	self._align = nil
 end
 
+--- Warp em andamento: carga, túnel ou a trava da chegada.
+function ShipController:IsWarpBusy(): boolean
+	return self._warp:IsBusy() or self._align ~= nil
+end
+
 function ShipController:_refreshDestinations(ship: Model)
 	local stats = self:GetEquippedStats()
 	if not stats then
@@ -931,9 +948,13 @@ function ShipController:_refreshDestinations(ship: Model)
 
 	local list = {}
 	for _, dest in WarpModule.GetDestinations() do
+		if not MapConfig.IsWarpable(dest.id) then
+			continue -- só de mapa (Solara)
+		end
 		local distance = (dest.position - from).Magnitude
 		table.insert(list, {
 			id = dest.id,
+			position = dest.position,
 			distance = distance,
 			inRange = WarpModule.IsInRange(stats.warpRange, from, dest.position),
 		})
@@ -942,7 +963,68 @@ function ShipController:_refreshDestinations(ship: Model)
 		return a.distance < b.distance
 	end)
 
-	self._warp:SetDestinations(list, WarpModule.IsUnlimited(stats.warpRange))
+	self._destinations = list
+end
+
+--[[
+	Alvo da mira: o marcador de warp mais perto do centro da tela, dentro de
+	AIM_ENTER_ANGLE (ou AIM_KEEP_ANGLE, se já era o alvo). A direção é a da
+	câmera, não a do nariz da nave: é "pra onde o piloto está olhando".
+	Alcance e distância vêm da última atualização da lista (_refreshDestinations).
+]]
+function ShipController:_updateAimTarget(active: boolean)
+	if not active then
+		self._aim:SetTarget(nil)
+		return
+	end
+
+	local camera = workspace.CurrentCamera
+	local origin = camera.CFrame.Position
+	local look = camera.CFrame.LookVector
+	local current = self._aim:GetTarget()
+
+	local best, bestAngle = nil, math.huge
+	for _, dest in self._destinations do
+		if dest.distance < WarpModule.MIN_DISTANCE then
+			continue
+		end
+		local offset = dest.position - origin
+		local length = offset.Magnitude
+		if length < 1 then
+			continue
+		end
+		local angle = math.deg(math.acos(math.clamp(look:Dot(offset / length), -1, 1)))
+		local limit = if current and current.id == dest.id then AIM_KEEP_ANGLE else AIM_ENTER_ANGLE
+		if angle <= limit and angle < bestAngle then
+			best, bestAngle = dest, angle
+		end
+	end
+
+	if not best then
+		self._aim:SetTarget(nil)
+		return
+	end
+
+	self._aim:SetTarget({
+		id = best.id,
+		name = MapConfig.GetDisplayName(best.id),
+		position = best.position,
+		distance = best.distance,
+		inRange = best.inRange,
+	})
+end
+
+function ShipController:_activateAim()
+	local target = self._aim:GetTarget()
+	if not target then
+		return
+	end
+	if not target.inRange then
+		self._warp:ShowMessage(message("WARP_OUT_OF_RANGE"), true)
+		return
+	end
+	self._aim:SetTarget(nil)
+	self:RequestWarp(target.id)
 end
 
 --- Brilho crescente no casco de QUALQUER nave carregando warp. É o que deixa
@@ -1087,6 +1169,11 @@ function ShipController:_update(dt: number)
 			self:_refreshDestinations(ship)
 		end
 	end
+
+	-- Mira de warp: pilotando, sem warp em andamento e sem o mapa por cima
+	local mapController = Knit.GetController("MapController")
+	local mapOpen = mapController ~= nil and mapController:IsOpen()
+	self:_updateAimTarget(canWarp and not self:IsWarpBusy() and not mapOpen)
 
 	-- Menu aberto e o jogador se afastou (da nave e do terminal): fecha.
 	-- A distância é medida pelo Body, nunca pelo pivô: Model sem PrimaryPart

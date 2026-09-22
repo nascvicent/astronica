@@ -2,9 +2,11 @@
 	WarpModule
 	Regras do warp: destinos, raio por tipo e a carga interrompível.
 
-	O warp leva até o MARCADOR ORBITAL (Part em workspace/WarpDestinations,
-	nome = id do destino), ainda voando. Descer no planeta é outro evento
-	(TeleportManager) e não passa por aqui.
+	O warp leva pra perto do MARCADOR (Part em workspace/WarpDestinations,
+	nome = id do destino), ainda voando. O marcador fica DENTRO do local
+	(planeta, estação); a nave chega ARRIVAL_OFFSET antes dele, na linha de
+	quem vem. Descer no planeta é outro evento (TeleportManager) e não passa
+	por aqui.
 
 	Funções puras são usadas pelo client (lista de destinos com "no alcance")
 	e pelo server (validação). WarpModule.Charge só roda no server.
@@ -16,8 +18,14 @@ local PlaceConfig = require(script.Parent.PlaceConfig)
 
 local WarpModule = {}
 
--- Distância da chegada até o marcador, pra nave não nascer dentro dele
-WarpModule.ARRIVAL_OFFSET = 60
+-- Distância da chegada até o marcador. O marcador fica dentro do local,
+-- então isso é o quanto a nave para antes dele
+WarpModule.ARRIVAL_OFFSET = 1500
+
+-- Distância mínima até o marcador pra warpar. Menor que isso é voar. Fica
+-- acima do ARRIVAL_OFFSET: quem acabou de chegar não é oferecido o mesmo
+-- destino de novo
+WarpModule.MIN_DISTANCE = 2000
 
 --[[
 	Viagem: o trecho entre a carga cheia e a chegada, em que o piloto vê o
@@ -73,14 +81,19 @@ function WarpModule.IsInRange(range: number, from: Vector3, to: Vector3): boolea
 	return WarpModule.IsUnlimited(range) or (to - from).Magnitude <= range
 end
 
---- CFrame de chegada: um pouco antes do marcador, olhando pra ele.
+function WarpModule.IsTooClose(from: Vector3, to: Vector3): boolean
+	return (to - from).Magnitude < WarpModule.MIN_DISTANCE
+end
+
+--- CFrame de chegada: ARRIVAL_OFFSET antes do marcador, na linha de quem
+--- vem de `from`, olhando pra ele.
 function WarpModule.GetArrivalCFrame(from: Vector3, marker: BasePart): CFrame
 	local target = marker.Position
 	local dir = target - from
 	if dir.Magnitude < 1 then
 		dir = marker.CFrame.LookVector
 	end
-	local arrival = target - dir.Unit * (WarpModule.ARRIVAL_OFFSET + marker.Size.Magnitude / 2)
+	local arrival = target - dir.Unit * WarpModule.ARRIVAL_OFFSET
 	return CFrame.lookAt(arrival, target)
 end
 

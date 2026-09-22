@@ -213,6 +213,88 @@ function UIStyle.button(parent: Instance, text: string, primary: boolean?)
 	return btn, set
 end
 
+--[[
+	Dica de tecla discreta: tecla num quadradinho + rótulo, sem placa. É o
+	jeito dos atalhos da HUD de voo ([M] MAPA, [G] WARP) ficarem no canto sem
+	pesar. No celular não há tecla: vira só o rótulo numa pílula leve, que é o
+	botão de toque.
+
+	Cresce pra esquerda a partir do AnchorPoint (1, 0), pra empilhar encostado
+	na borda direita. Retorna o botão e set(label, key?).
+]]
+UIStyle.HINT_HEIGHT = if UIStyle.IS_MOBILE then 32 else 24
+UIStyle.HINT_GAP = 6
+
+function UIStyle.keyHint(parent: Instance, key: string, label: string)
+	local btn = Instance.new("TextButton")
+	btn.Name = "KeyHint"
+	btn.AnchorPoint = Vector2.new(1, 0)
+	btn.AutomaticSize = Enum.AutomaticSize.X
+	btn.Size = UDim2.fromOffset(0, UIStyle.HINT_HEIGHT)
+	btn.BackgroundColor3 = C.plate
+	btn.BackgroundTransparency = if UIStyle.IS_MOBILE then 0.45 else 1
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+	btn.Text = ""
+	btn.Parent = parent
+	if UIStyle.IS_MOBILE then
+		UIStyle.corner(btn, UIStyle.HINT_HEIGHT // 2)
+		UIStyle.stroke(btn, T.panelLine, 1)
+		UIStyle.padding(btn, 0, 14, 0, 14)
+	end
+
+	local layout = UIStyle.list(btn, 8, true)
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+
+	local cap = Instance.new("TextLabel")
+	cap.Name = "Key"
+	cap.Size = UDim2.fromOffset(20, 20)
+	cap.BackgroundColor3 = C.plate
+	cap.BackgroundTransparency = 0.45
+	cap.BorderSizePixel = 0
+	cap.TextColor3 = C.text
+	cap.TextSize = 12
+	cap.FontFace = UIStyle.FONT_BOLD
+	cap.LayoutOrder = 1
+	cap.Visible = not UIStyle.IS_MOBILE
+	cap.Parent = btn
+	UIStyle.corner(cap, 5)
+	UIStyle.stroke(cap, 0.55, 1)
+
+	local text = UIStyle.label(btn, "Label", 12, UIStyle.FONT_BOLD, T.textSecondary)
+	text.AutomaticSize = Enum.AutomaticSize.X
+	text.Size = UDim2.fromScale(0, 1)
+	text.LayoutOrder = 2
+	local shadow = Instance.new("UIStroke")
+	shadow.Color = C.plate
+	shadow.Thickness = 1.5
+	shadow.Transparency = 0.4
+	shadow.Parent = text
+
+	btn.MouseEnter:Connect(function()
+		text.TextTransparency = T.textPrimary
+	end)
+	btn.MouseLeave:Connect(function()
+		text.TextTransparency = T.textSecondary
+	end)
+
+	local function set(newLabel: string, newKey: string?)
+		text.Text = UIStyle.spaced(newLabel)
+		if newKey then
+			cap.Text = newKey
+		end
+	end
+	set(label, key)
+
+	return btn, set
+end
+
+--- Topo da dica número `slot` (1, 2, ...) na pilha do canto superior direito.
+function UIStyle.hintSlotY(top: number, slot: number): number
+	return top + (slot - 1) * (UIStyle.HINT_HEIGHT + UIStyle.HINT_GAP)
+end
+
 -- ═══════════════════════════════════════════════════════════
 -- Painel modal (overlay + card + cabeçalho + abas)
 -- ═══════════════════════════════════════════════════════════

@@ -37,6 +37,7 @@ local RunService = game:GetService("RunService")
 local ShipData = require(ReplicatedStorage.Shared.ShipData)
 local PlaceConfig = require(ReplicatedStorage.Shared.PlaceConfig)
 local WarpModule = require(ReplicatedStorage.Shared.WarpModule)
+local MapConfig = require(ReplicatedStorage.Shared.MapConfig)
 local InventoryModule = require(ReplicatedStorage.Shared.InventoryModule)
 
 local ACTION_COOLDOWN = 0.5
@@ -96,6 +97,7 @@ local Codes = {
 	NOT_PILOTING = "NOT_PILOTING",
 	WARP_NO_DESTINATION = "WARP_NO_DESTINATION",
 	WARP_OUT_OF_RANGE = "WARP_OUT_OF_RANGE",
+	WARP_TOO_CLOSE = "WARP_TOO_CLOSE",
 	WARP_ALREADY_CHARGING = "WARP_ALREADY_CHARGING",
 	WARP_INTERRUPTED = "WARP_INTERRUPTED",
 	WARP_SHIP_DOCKED = "WARP_SHIP_DOCKED",
@@ -1604,7 +1606,8 @@ function ShipService:RequestWarp(player: Player, destinationId: any): (boolean, 
 	end
 
 	local destination = WarpModule.GetDestination(destinationId)
-	if not destination then
+	-- Marcador só de mapa (Solara): existe, mas não é destino
+	if not destination or not MapConfig.IsWarpable(destination.id) then
 		return false, Codes.WARP_NO_DESTINATION
 	end
 
@@ -1613,7 +1616,11 @@ function ShipService:RequestWarp(player: Player, destinationId: any): (boolean, 
 		return false, Codes.NOT_LOADED
 	end
 
-	if not WarpModule.IsInRange(stats.warpRange, getShipPosition(model), destination.position) then
+	local shipPosition = getShipPosition(model)
+	if WarpModule.IsTooClose(shipPosition, destination.position) then
+		return false, Codes.WARP_TOO_CLOSE
+	end
+	if not WarpModule.IsInRange(stats.warpRange, shipPosition, destination.position) then
 		return false, Codes.WARP_OUT_OF_RANGE
 	end
 

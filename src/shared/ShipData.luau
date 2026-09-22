@@ -102,7 +102,7 @@ ShipData.Types = {
 		maxShots = 30,
 		cooldownTime = 2,
 		fireRate = 0.08,
-		warp = { range = 4000, chargeTime = 3 },
+		warp = { range = 15000, chargeTime = 3 },
 	},
 	miner = {
 		name = "Minerador",
@@ -110,7 +110,7 @@ ShipData.Types = {
 		maxShots = 10,
 		cooldownTime = 5,
 		fireRate = 0.15,
-		warp = { range = 1500, chargeTime = 2 },
+		warp = { range = 8000, chargeTime = 2 },
 	},
 	explorer = {
 		name = "Explorador",
@@ -118,7 +118,7 @@ ShipData.Types = {
 		maxShots = 18,
 		cooldownTime = 3.5,
 		fireRate = 0.12,
-		warp = { range = 0, chargeTime = 6 },
+		warp = { range = 40000, chargeTime = 6 },
 	},
 }
 
@@ -259,7 +259,7 @@ end
 local DESCRIPTIONS = {
 	combat = "Pressão contínua: mais tiros antes de superaquecer e casco pra aguentar a troca.",
 	miner = "Extrai rápido e com mais rendimento. Warp curto, mas sai num piscar.",
-	explorer = "Vai a qualquer lugar de onde estiver. A carga longa do warp é o preço.",
+	explorer = "O maior alcance de warp da frota. A carga longa é o preço.",
 }
 
 ShipData.Ships = {} :: { [string]: ShipDef }
@@ -269,7 +269,7 @@ ShipData.Ships = {} :: { [string]: ShipDef }
 ShipData.Ships.dispatcher = {
 	id = "dispatcher",
 	displayName = "Dispatcher",
-	description = "Cápsula de saída armada. Tiro leve, e warpa de qualquer lugar.",
+	description = "Cápsula de saída armada. Tiro leve, e warpa de muito longe.",
 	tier = 1,
 	shipType = "explorer",
 	rarity = "common",
@@ -285,7 +285,7 @@ ShipData.Ships.dispatcher = {
 		fireRate = 0.12,
 	},
 	gunsEnabled = true,
-	warp = { range = 0, chargeTime = 6 },
+	warp = { range = 40000, chargeTime = 6 },
 	cost = { lumens = 0 },
 	unlockRequirement = nil,
 	maxModuleLevel = { engine = 4, weapon = 4, drill = 4, plating = 4 },
@@ -313,7 +313,7 @@ ShipData.Ships.deimos = {
 		fireRate = 0.15,
 	},
 	gunsEnabled = true,
-	warp = { range = 3500, chargeTime = 2 },
+	warp = { range = 10000, chargeTime = 2 },
 	cost = { lumens = 400 },
 	unlockRequirement = nil,
 	maxModuleLevel = { engine = 3, weapon = 3, drill = 4, plating = 3 },
