@@ -7,6 +7,7 @@ require(script.Controllers.HealthController)
 require(script.Controllers.LaserToolController)
 require(script.Controllers.SprintController)
 require(script.Controllers.ShipController)
+require(script.Controllers.MapController)
 require(script.Controllers.HangarAmbienceController)
 
 -- Start Knit
