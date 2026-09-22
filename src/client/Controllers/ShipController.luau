@@ -22,6 +22,7 @@ local PlaceConfig = require(ReplicatedStorage.Shared.PlaceConfig)
 local WarpModule = require(ReplicatedStorage.Shared.WarpModule)
 local InventoryModule = require(ReplicatedStorage.Shared.InventoryModule)
 local MapConfig = require(ReplicatedStorage.Shared.MapConfig)
+local FlightLimits = require(ReplicatedStorage.Shared.FlightLimits)
 
 local UI = script.Parent.Parent.UI
 local ShipPrompts = require(UI.ShipPrompts)
@@ -75,6 +76,23 @@ local ARRIVAL_HOLD = 1
 -- piscar na borda). Abaixo de WarpModule.MIN_DISTANCE não oferece: é voar.
 local AIM_ENTER_ANGLE = 5
 local AIM_KEEP_ANGLE = 8
+
+-- Limites de voo (FlightLimits): de quanto em quanto tempo relê a posição de
+-- Solara, e a cor do aviso de sinal fraco
+local SOLARA_REFRESH = 2
+local LIMIT_WARN_COLOR = Color3.fromRGB(255, 190, 80)
+
+-- Texto do aviso por limite (id do FlightLimits.Nearest) e faixa
+local LIMIT_MESSAGES = {
+	floor = {
+		warn = "SINAL DA CENTRAL FRACO",
+		lost = "CONTATO PERDIDO COM A CENTRAL  ·  RETORNE",
+	},
+	solara = {
+		warn = "TEMPERATURA DO CASCO SUBINDO",
+		lost = "TEMPERATURA CRÍTICA  ·  CASCO DESINTEGRANDO",
+	},
+}
 
 local MESSAGES = {
 	OK = "Pronto.",
@@ -177,6 +195,12 @@ function ShipController:KnitStart()
 	self:_bindPrompts()
 	self:_bindInput()
 	self:_bindWarpFx()
+
+	-- Stepped: logo antes do passo de física, depois do kit de voo escrever
+	-- a velocidade (mesmo motivo do alinhamento do warp)
+	RunService.Stepped:Connect(function()
+		self:_stepLimits()
+	end)
 
 	RunService.Heartbeat:Connect(function(dt)
 		self:_update(dt)
@@ -1117,6 +1141,92 @@ function ShipController:_bindWarpFx()
 end
 
 -- ═══════════════════════════════════════════════════════════
+-- Limites de voo
+-- ═══════════════════════════════════════════════════════════
+
+--[[
+	Fundo do mapa e Solara: a nave freia ao chegar perto e para no limite, em
+	vez de cair no vazio ou entrar na estrela. Só no espaço, pilotando, e fora
+	do warp (a arrancada e a trava da chegada mandam na velocidade ali).
+]]
+function ShipController:_updateLimits(dt: number, ship: Model?, piloting: boolean)
+	local body = ship and ship:FindFirstChild(ShipData.PARTS.body)
+	local active = piloting and not self._isPlanet and self._align == nil and body ~= nil and body:IsA("BasePart")
+
+	if not active then
+		self._limitBody = nil
+		self._limit = nil
+		self:_setLimitToast(nil)
+		return
+	end
+
+	self._solaraTimer = (self._solaraTimer or 0) - dt
+	if self._solaraTimer <= 0 then
+		self._solaraTimer = SOLARA_REFRESH
+		self._solaraPosition = FlightLimits.GetSolaraPosition()
+	end
+
+	self._limitBody = body :: BasePart
+	local limit = FlightLimits.Nearest((body :: BasePart).Position, self._solaraPosition)
+	self._limit = limit
+
+	if limit.distance <= 5 then
+		self:_setLimitToast("lost", limit.id)
+	elseif limit.distance < FlightLimits.WARN_DISTANCE then
+		self:_setLimitToast("warn", limit.id)
+	else
+		self:_setLimitToast(nil)
+	end
+end
+
+function ShipController:_setLimitToast(band: string?, limitId: string?)
+	local state = if band then band .. ":" .. tostring(limitId) else nil
+	-- Mesmo estado não repinta, a menos que outro aviso (um Flash da
+	-- ancoragem) tenha tirado este da tela
+	if state == self._limitToast and (state == nil or self._toast:IsShowing()) then
+		return
+	end
+	local previous = self._limitToast
+	self._limitToast = state
+
+	local messages = LIMIT_MESSAGES[limitId or ""] or LIMIT_MESSAGES.floor
+	if band == "lost" then
+		self._toast:Show(messages.lost, UIStyle.C.negative)
+	elseif band == "warn" then
+		self._toast:Show(messages.warn, LIMIT_WARN_COLOR)
+	elseif previous then
+		self._toast:Hide()
+	end
+end
+
+function ShipController:_stepLimits()
+	local body = self._limitBody
+	local limit = self._limit
+	if not body or not limit or not body.Parent or self._align then
+		return
+	end
+
+	-- Atualiza a distância com a posição deste passo (o _update é do frame
+	-- anterior)
+	limit = FlightLimits.Nearest(body.Position, self._solaraPosition)
+	if limit.distance >= FlightLimits.WARN_DISTANCE then
+		return
+	end
+
+	local velocity = body.AssemblyLinearVelocity
+	local clamped = FlightLimits.Clamp(velocity, limit)
+	if clamped ~= velocity then
+		body.AssemblyLinearVelocity = clamped
+	end
+
+	-- O BodyVelocity do kit puxaria de volta pro throttle do piloto
+	local mover = body:FindFirstChildWhichIsA("BodyVelocity")
+	if mover then
+		mover.Velocity = FlightLimits.Clamp(mover.Velocity, limit)
+	end
+end
+
+-- ═══════════════════════════════════════════════════════════
 -- Loop
 -- ═══════════════════════════════════════════════════════════
 
@@ -1203,6 +1313,7 @@ function ShipController:_update(dt: number)
 	end
 
 	self:_updateDockToast(ship)
+	self:_updateLimits(dt, ship, piloting)
 
 	-- Nave fora do assento dentro do hangar: MenuPrompt vira GUARDAR NAVE.
 	-- É o único uso de jogabilidade da HangarZone; o resto é ambiência.
