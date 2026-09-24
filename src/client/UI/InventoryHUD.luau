@@ -18,6 +18,7 @@ local InventoryModule = require(Shared.InventoryModule)
 local ItemModels = require(Shared.ItemModels)
 local ShipData = require(Shared.ShipData)
 local ShipViewport = require(script.Parent.ShipViewport)
+local SuitTab = require(script.Parent.SuitTab)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -62,6 +63,7 @@ local SCROLLBAR = if IS_MOBILE then 6 else 2
 
 -- Tabs
 local TABS = { "Itens", "Traje", "Nave" }
+local SUIT_TAB = 2
 local SHIP_TAB = 3
 local SHIP_SPIN = 0.4 -- rad/s
 
@@ -309,6 +311,10 @@ end
 local InventoryHUD = {}
 InventoryHUD.__index = InventoryHUD
 
+-- ScreenGui do StarterGui que serve de molde pro inventário completo
+local FULL_GUI_TEMPLATE = "InventoryGui"
+local FULL_GUI_NAME = "InventoryGui_Client"
+
 function InventoryHUD.new()
 	local self = setmetatable({}, InventoryHUD)
 
@@ -322,7 +328,30 @@ function InventoryHUD.new()
 	self:_buildQuickBar()
 
 	-- Full inventory (2D ScreenGui)
-	self._fullGui = playerGui:WaitForChild("InventoryGui")
+	-- Cópia própria do cliente em vez da InventoryGui do StarterGui: quem limpa o
+	-- PlayerGui na troca de personagem (traje/respawn) é o SERVIDOR, que só
+	-- conhece a cópia dele (ResetOnSpawn = true) e a apagava. Uma GUI criada
+	-- no cliente não existe pro servidor e sobrevive.
+	local template = playerGui:WaitForChild(FULL_GUI_TEMPLATE)
+	self._fullGui = template:Clone()
+	self._fullGui.Name = FULL_GUI_NAME
+	self._fullGui.ResetOnSpawn = false
+	-- Script dentro do molde rodaria duas vezes (no original e na cópia)
+	for _, d in self._fullGui:GetDescendants() do
+		if d:IsA("LuaSourceContainer") then
+			d:Destroy()
+		end
+	end
+	self._fullGui.Parent = playerGui
+
+	-- As cópias do servidor (a atual e as recriadas a cada respawn) ficam desligadas
+	local function silence(gui: Instance)
+		if gui.Name == FULL_GUI_TEMPLATE and gui:IsA("LayerCollector") then
+			gui.Enabled = false
+		end
+	end
+	silence(template)
+	playerGui.ChildAdded:Connect(silence)
 	self._fullGui.Enabled = false
 	-- Acima dos botões de toque (RUN, disparo), que cobririam o painel no mobile
 	self._fullGui.DisplayOrder = math.max(self._fullGui.DisplayOrder, 10)
@@ -1087,6 +1116,7 @@ function InventoryHUD:_buildFullInventory()
 	end)
 
 	self:_buildShipTab()
+	self._suitTab = SuitTab.new(body)
 	self:_applyFullLayout()
 end
 
@@ -1279,6 +1309,16 @@ function InventoryHUD:SetShipInfo(state)
 	if self._isOpen and self._activeTab == SHIP_TAB then
 		self:_renderShipTab()
 	end
+end
+
+--- Estado dos trajes vindo do SuitService (via SuitController).
+function InventoryHUD:SetSuitState(state)
+	self._suitTab:SetState(state)
+end
+
+--- handlers = { onEquip(suitId), onBuy(suitId) }
+function InventoryHUD:SetSuitHandlers(handlers)
+	self._suitTab:SetHandlers(handlers)
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -1618,19 +1658,19 @@ function InventoryHUD:_selectTab(index: number)
 		tab.indicator.Visible = isActive
 	end
 
-	-- Aba Nave troca grid + preview pela ficha da nave
+	-- Abas Nave e Traje trocam grid + preview pela ficha própria
 	local shipTab = index == SHIP_TAB
-	self._gridScroll.Visible = not shipTab
-	self._previewSection.Visible = not shipTab
-	self._bodyDivider.Visible = not shipTab
+	local suitTab = index == SUIT_TAB
+	self._gridScroll.Visible = not shipTab and not suitTab
+	self._previewSection.Visible = not shipTab and not suitTab
+	self._bodyDivider.Visible = not shipTab and not suitTab
 	if self._shipTab then
 		self._shipTab.Visible = shipTab
 		if shipTab and self._isOpen then
 			self:_renderShipTab()
 		end
 	end
-
-	-- TODO: filtrar conteúdo da grid por tab (Itens/Traje)
+	self._suitTab:SetVisible(suitTab and self._isOpen)
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -1691,9 +1731,17 @@ function InventoryHUD:Toggle()
 		self._fullGui.Enabled = true
 		-- Com a GUI desligada o AbsoluteSize pode não ter sido medido ainda
 		self:_applyFullLayout()
-		self:_refreshPreview(true)
+		-- Erro no preview (ex: personagem trocado no meio) não pode deixar o
+		-- painel invisível: o fade de abertura vem logo abaixo
+		local ok, err = pcall(self._refreshPreview, self, true)
+		if not ok then
+			warn("[InventoryHUD] Preview do personagem falhou:", err)
+		end
 		if self._activeTab == SHIP_TAB then
 			self:_renderShipTab()
+		end
+		if self._activeTab == SUIT_TAB then
+			self._suitTab:SetVisible(true)
 		end
 
 		self._fullBg.BackgroundTransparency = 1
@@ -1733,6 +1781,7 @@ function InventoryHUD:Toggle()
 				-- A cópia do personagem não precisa ficar viva com o painel fechado
 				self:_clearPreview()
 				self:_clearShipTab()
+				self._suitTab:Clear()
 			end
 		end)
 	end
@@ -1807,6 +1856,10 @@ function InventoryHUD:_animateFx(dt: number)
 	if self._shipModel and self._activeTab == SHIP_TAB then
 		self._shipSpin = ((self._shipSpin or 0) + dt * SHIP_SPIN) % (2 * math.pi)
 		self._shipModel:PivotTo(CFrame.Angles(0, self._shipSpin, 0))
+	end
+
+	if self._activeTab == SUIT_TAB then
+		self._suitTab:Step(dt)
 	end
 
 	if self._previewModel and self._previewSpinSpeed > 0 then

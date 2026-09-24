@@ -124,6 +124,9 @@ function MiningService:_depleteNode(player: Player, node: BasePart, state)
 
 	self.Client.NodeDepleted:Fire(player, node, state.itemId, amount)
 
+	-- Objetivo "minerar todos os tipos" (libera traje)
+	self._suits:RecordOreMined(player, state.itemId)
+
 	task.delay(state.def.respawn, function()
 		if not node:IsDescendantOf(workspace) or not self._nodes[node] then
 			return
@@ -296,6 +299,7 @@ end
 function MiningService:KnitStart()
 	self._inventory = Knit.GetService("InventoryService")
 	self._ships = Knit.GetService("ShipService")
+	self._suits = Knit.GetService("SuitService")
 
 	self.Client.FireLaser:Connect(function(player, aimPoint, modeName)
 		self:_onFire(player, aimPoint, modeName)

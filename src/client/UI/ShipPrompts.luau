@@ -55,8 +55,11 @@ function ShipPrompts.new()
 	self._entries = {} :: { [ProximityPrompt]: any }
 	self._shipConns = {} :: { [Model]: { RBXScriptConnection } }
 
-	self._folder = Instance.new("Folder")
+	-- ScreenGui com ResetOnSpawn=false (e não Folder): ao trocar de personagem
+	-- (respawn ou traje) o PlayerGui é limpo e uma Folder some junto com os billboards
+	self._folder = Instance.new("ScreenGui")
 	self._folder.Name = "ShipPrompts"
+	self._folder.ResetOnSpawn = false
 	self._folder.Parent = playerGui
 
 	for _, model in CollectionService:GetTagged(ShipData.SHIP_TAG) do
