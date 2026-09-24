@@ -2,38 +2,46 @@
 	WarpHUD
 	Só aparece pilotando a própria nave num Place com WarpDestinations.
 
-	  - Barra de carga: progresso + cancelar [X]
-	  - Mensagem curta (fora de alcance, interrompido, chegada)
+	  - Carga: holograma no topo, ao centro — destino, progresso e cancelar [X]
+	  - Mensagem curta (fora de alcance, interrompido, chegada): linha
+	    holográfica logo abaixo da carga, sem placa
 
-	O destino é escolhido mirando no marcador (WarpAimHUD, [F]) ou pelo mapa
-	(MapHUD). Quem decide e valida é o servidor.
+	É instrumento de voo como a velocidade e o casco, então usa o mesmo
+	sistema de placa presa à câmera (Holo). O destino é escolhido mirando no
+	marcador (WarpAimHUD, [F]) ou pelo mapa (MapHUD). Quem decide e valida é
+	o servidor.
 
 	Local: src/client/UI/WarpHUD.luau
 ]]
 
-local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
-local GuiService = game:GetService("GuiService")
 
 local UIStyle = require(script.Parent.UIStyle)
+local Holo = require(script.Parent.Holo)
 
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local THEME = Holo.THEME
+local HT = Holo.T
+local upper = UIStyle.upper
 
-local C, T = UIStyle.C, UIStyle.T
-local spaced, upper = UIStyle.spaced, UIStyle.upper
+-- Placas, em studs na escala do PC
+local CHARGE_SIZE = Vector2.new(1.1, 0.26)
+local MESSAGE_SIZE = Vector2.new(1.5, 0.12)
+local SCREEN_Y = 0.8 -- topo, centralizado
+local MESSAGE_GAP = 0.02
+-- O warp é o momento de destaque do voo: as duas placas são maiores que as
+-- de instrumento (conteúdo junto, mesmo layout)
+local WARP_SCALE = 1.5
 
--- Layout: margem da borda. Tela compacta (altura <=
--- UIStyle.COMPACT_MAX_HEIGHT) aperta tudo.
-local MARGIN = 24
-local MARGIN_COMPACT = 12
-local GAP = 8
--- Largura reservada pra coluna das dicas de tecla (a barra de carga não invade)
-local HINT_COLUMN = 130
-local CHARGE_WIDTH = 360
-local CHARGE_HEIGHT = 62
-local CHARGE_TOP = 70
-local MESSAGE_WIDTH = 480
+-- Conteúdo, em pixels da SurfaceGui
+local PADDING = 18
+local LABEL_SIZE = 30
+local CANCEL_SIZE = 24
+local CANCEL_WIDTH = 190
+local BAR_Y = 62
+local BAR_HEIGHT = 14
+local MESSAGE_TEXT_SIZE = 30
+
+local MESSAGE_TIME = 2.5
 
 local WarpHUD = {}
 WarpHUD.__index = WarpHUD
@@ -44,52 +52,51 @@ function WarpHUD.new()
 	self._visible = false
 	self._charging = false
 	self._travelling = false
+	self._messageShown = false
 
 	self:_build()
 	return self
 end
 
 function WarpHUD:_build()
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "WarpHUD"
-	gui.ResetOnSpawn = false
-	gui.IgnoreGuiInset = true
-	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	gui.DisplayOrder = 6
-	gui.Enabled = false
-	gui.Parent = playerGui
-	self._gui = gui
-
 	-- Carga
-	local charge = Instance.new("Frame")
-	charge.Name = "Charge"
-	charge.AnchorPoint = Vector2.new(0.5, 0)
-	charge.BackgroundColor3 = C.plate
-	charge.BackgroundTransparency = 0.2
-	charge.Visible = false
-	charge.Parent = gui
-	UIStyle.corner(charge, 12)
-	UIStyle.stroke(charge, T.slotFillLine, 1)
-	UIStyle.padding(charge, 10, 14, 10, 14)
-	self._charge = charge
+	local charge = Holo.new("WarpCharge", CHARGE_SIZE, function(cam)
+		return Holo.ScreenCFrame(cam, 0, SCREEN_Y, 0)
+	end, WARP_SCALE)
+	self._chargeHolo = charge
 
-	local chargeLabel = UIStyle.label(charge, "Label", 13, UIStyle.FONT_BOLD, T.textPrimary)
-	chargeLabel.Size = UDim2.new(1, -100, 0, 18)
-	self._chargeLabel = chargeLabel
+	local container = charge:Plate()
+	local padding = Instance.new("UIPadding")
+	padding.PaddingTop = UDim.new(0, PADDING)
+	padding.PaddingBottom = UDim.new(0, PADDING)
+	padding.PaddingLeft = UDim.new(0, PADDING + 4)
+	padding.PaddingRight = UDim.new(0, PADDING + 4)
+	padding.Parent = container
+
+	local label = Holo.Label(container, "Label", LABEL_SIZE, Holo.FONT_VALUE, HT.value, true)
+	label.Size = UDim2.new(1, -CANCEL_WIDTH - 12, 0, 40)
+	self._chargeLabel = label
 
 	local cancel = Instance.new("TextButton")
 	cancel.Name = "Cancel"
 	cancel.AnchorPoint = Vector2.new(1, 0)
 	cancel.Position = UDim2.fromScale(1, 0)
-	cancel.Size = UDim2.fromOffset(96, 18)
+	cancel.Size = UDim2.fromOffset(CANCEL_WIDTH, 40)
 	cancel.BackgroundTransparency = 1
-	cancel.Text = if UIStyle.IS_MOBILE then spaced("CANCELAR") else spaced("CANCELAR") .. " [X]"
-	cancel.TextColor3 = C.text
-	cancel.TextTransparency = T.textSecondary
-	cancel.TextSize = 11
-	cancel.FontFace = UIStyle.FONT_MEDIUM
+	cancel.AutoButtonColor = false
+	cancel.Text = if UIStyle.IS_MOBILE then "CANCELAR" else "CANCELAR [X]"
+	cancel.TextColor3 = THEME.white
+	cancel.TextTransparency = HT.title
+	cancel.TextSize = CANCEL_SIZE
+	cancel.FontFace = Holo.FONT_TITLE
 	cancel.TextXAlignment = Enum.TextXAlignment.Right
-	cancel.Parent = charge
+	cancel.Parent = container
+	cancel.MouseEnter:Connect(function()
+		cancel.TextTransparency = HT.value
+	end)
+	cancel.MouseLeave:Connect(function()
+		cancel.TextTransparency = HT.title
+	end)
 	cancel.Activated:Connect(function()
 		if self._onCancel then
 			self._onCancel()
@@ -97,70 +104,31 @@ function WarpHUD:_build()
 	end)
 	self._cancel = cancel
 
-	local track = Instance.new("Frame")
-	track.Name = "Track"
-	track.Position = UDim2.fromOffset(0, 30)
-	track.Size = UDim2.new(1, 0, 0, 6)
-	track.BackgroundColor3 = C.surface
-	track.BackgroundTransparency = 0.88
-	track.BorderSizePixel = 0
-	track.Parent = charge
-	UIStyle.corner(track, 3)
+	self._chargeFill = Holo.Bar(container, "Charge", BAR_Y, BAR_HEIGHT)
+	self._chargeFill.Size = UDim2.fromScale(0, 1)
 
-	local fill = Instance.new("Frame")
-	fill.Name = "Fill"
-	fill.Size = UDim2.fromScale(0, 1)
-	fill.BackgroundColor3 = C.prompt
-	fill.BorderSizePixel = 0
-	fill.Parent = track
-	UIStyle.corner(fill, 3)
-	self._chargeFill = fill
+	-- Mensagem: logo abaixo da carga, no mesmo lugar com ou sem carga na tela
+	local message
+	message = Holo.new("WarpMessage", MESSAGE_SIZE, function(cam)
+		local down = charge.size.Y / 2 + MESSAGE_GAP * Holo.SCALE * WARP_SCALE + message.size.Y / 2
+		return Holo.ScreenCFrame(cam, 0, SCREEN_Y, 0, Vector3.new(0, -down, 0))
+	end, WARP_SCALE)
+	self._messageHolo = message
 
-	-- Mensagem curta (fora de alcance, interrompido)
-	local message = UIStyle.label(gui, "Message", 14, UIStyle.FONT_BOLD, 0)
-	message.AnchorPoint = Vector2.new(0.5, 0)
-	message.TextXAlignment = Enum.TextXAlignment.Center
-	message.Visible = false
-	local messageStroke = Instance.new("UIStroke")
-	messageStroke.Color = C.plate
-	messageStroke.Thickness = 2
-	messageStroke.Transparency = 0.3
-	messageStroke.Parent = message
-	self._message = message
-
-	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		self:_layout()
-	end)
-	self:_layout()
+	local text = Holo.Label(message.gui, "Message", MESSAGE_TEXT_SIZE, Holo.FONT_VALUE, HT.value, true)
+	text.Size = UDim2.fromScale(1, 1)
+	text.TextXAlignment = Enum.TextXAlignment.Center
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = THEME.plate
+	stroke.Thickness = 3
+	stroke.Transparency = 0.2
+	stroke.Parent = text
+	self._message = text
 end
 
---[[
-	Recalcula tudo a partir do tamanho real da tela. Roda no build e toda vez
-	que ela muda (girar o celular, redimensionar a janela).
-
-	A área útil desconta o inset do topo (barra do Roblox), porque a ScreenGui
-	usa IgnoreGuiInset e, sem isso, a barra entraria embaixo dela.
-]]
-function WarpHUD:_layout()
-	local size = self._gui.AbsoluteSize
-	if size.X <= 0 or size.Y <= 0 then
-		return -- ainda sem tamanho (primeiro frame)
-	end
-
-	local compact = size.Y <= UIStyle.COMPACT_MAX_HEIGHT
-	local margin = if compact then MARGIN_COMPACT else MARGIN
-	local inset = GuiService:GetGuiInset().Y
-	local top = inset + margin
-
-	-- Carga e mensagem: centradas no topo, nunca mais largas que a tela
-	local chargeTop = if compact then top else math.max(CHARGE_TOP, top)
-	self._charge.Position = UDim2.new(0.5, 0, 0, chargeTop)
-	-- Centrada, a barra não pode invadir a coluna das dicas na direita
-	local chargeRoom = size.X - 2 * (margin + HINT_COLUMN + GAP)
-	self._charge.Size = UDim2.fromOffset(math.clamp(chargeRoom, 200, CHARGE_WIDTH), CHARGE_HEIGHT)
-
-	self._message.Position = UDim2.new(0.5, 0, 0, chargeTop + CHARGE_HEIGHT + 8)
-	self._message.Size = UDim2.fromOffset(math.min(MESSAGE_WIDTH, size.X - margin * 2), 20)
+function WarpHUD:_refresh()
+	self._chargeHolo:SetVisible(self._visible and self._charging)
+	self._messageHolo:SetVisible(self._visible and self._messageShown)
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -171,12 +139,12 @@ function WarpHUD:SetCharging(destinationId: string?)
 	self:_stopTravelTween()
 	self._charging = destinationId ~= nil
 	self._travelling = false
-	self._charge.Visible = self._charging
 	self._cancel.Visible = true
 	if destinationId then
-		self._chargeLabel.Text = spaced("WARP") .. "  →  " .. spaced(upper(destinationId))
+		self._chargeLabel.Text = "WARP  →  " .. upper(destinationId)
 		self._chargeFill.Size = UDim2.fromScale(0, 1)
 	end
+	self:_refresh()
 end
 
 --- Dentro do túnel: a barra vira contagem de chegada e não dá mais pra cancelar.
@@ -184,10 +152,10 @@ function WarpHUD:SetTravelling(destinationId: string, duration: number)
 	self:_stopTravelTween()
 	self._charging = true
 	self._travelling = true
-	self._charge.Visible = true
 	self._cancel.Visible = false
-	self._chargeLabel.Text = spaced("SALTO") .. "  →  " .. spaced(upper(destinationId))
+	self._chargeLabel.Text = "SALTO  →  " .. upper(destinationId)
 	self._chargeFill.Size = UDim2.fromScale(0, 1)
+	self:_refresh()
 
 	self._travelTween = TweenService:Create(
 		self._chargeFill,
@@ -222,16 +190,17 @@ function WarpHUD:IsBusy(): boolean
 end
 
 function WarpHUD:ShowMessage(text: string, isError: boolean?)
-	local message = self._message
-	message.Text = text
-	message.TextColor3 = if isError then C.negative else C.text
-	message.Visible = true
+	self._message.Text = upper(text)
+	self._message.TextColor3 = if isError then THEME.danger else THEME.white
+	self._messageShown = true
+	self:_refresh()
 
 	local token = {}
 	self._messageToken = token
-	task.delay(2.5, function()
+	task.delay(MESSAGE_TIME, function()
 		if self._messageToken == token then
-			message.Visible = false
+			self._messageShown = false
+			self:_refresh()
 		end
 	end)
 end
@@ -249,14 +218,11 @@ function WarpHUD:SetVisible(visible: boolean)
 		return
 	end
 	self._visible = visible
-	self._gui.Enabled = visible
-	if visible then
-		-- A tela pode ter girado com a HUD escondida
-		self:_layout()
-	end
 	if not visible then
+		self._messageShown = false
 		self:SetCharging(nil)
 	end
+	self:_refresh()
 end
 
 function WarpHUD:IsVisible(): boolean

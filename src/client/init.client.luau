@@ -9,6 +9,8 @@ require(script.Controllers.SprintController)
 require(script.Controllers.ShipController)
 require(script.Controllers.MapController)
 require(script.Controllers.HangarAmbienceController)
+require(script.Controllers.CombatController)
+require(script.Controllers.FlightHudController)
 
 -- Start Knit
 Knit.Start():catch(warn):await()

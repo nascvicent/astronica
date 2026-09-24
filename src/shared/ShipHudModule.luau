@@ -26,23 +26,49 @@ local playerGui = player:WaitForChild("PlayerGui")
 -- Config
 -- ═══════════════════════════════════════════════════════════
 
-local PPS        = 512
-local PART_SIZE  = Vector3.new(0.9, 0.45, 0.01)
+local IS_MOBILE  = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+-- No celular a tela é fisicamente pequena: a placa cresce e o PPS cai na
+-- mesma proporção, então o conteúdo (em pixels da SurfaceGui) não muda, só
+-- fica maior na tela. Os hologramas da nave (CombatHUD, Holo) leem daqui.
+local SCALE      = if IS_MOBILE then 1.4 else 1
+
+local PPS        = 512 / SCALE
+local PART_SIZE  = Vector3.new(0.9 * SCALE, 0.45 * SCALE, 0.01)
 local DEPTH      = 4        -- distância Z da câmera
 local SCREEN_X   = -0.72   -- negativo = esquerda
 local SCREEN_X_MOBILE = -0.52  -- mais próximo do centro no celular
 local SCREEN_Y   = 0.72    -- positivo = topo
 local ROT_Y      = 15      -- inclinação holográfica (espelho do InventoryHUD)
-local IS_MOBILE  = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
--- Cores (mesmo tema do InventoryHUD)
+-- O LocalPlaneScript abre o FOV de 70 a 95 com a velocidade. A placa fica a
+-- uma distância fixa da câmera, então com FOV maior ela encolheria na tela.
+-- Em vez disso ela se aproxima na mesma proporção (ver GetDepth): a câmera
+-- continua se afastando, a HUD fica do mesmo tamanho.
+local REFERENCE_FOV = 70
+
+-- Modo cruzeiro: as placas de informação (velocidade, casco/armas) deslizam
+-- pra fora da tela pela esquerda. 0 = na tela, 1 = fora. Quem decide e anima
+-- é o FlightHudController; aqui só é aplicado. Fica no módulo (não na
+-- instância) porque a placa de velocidade é criada pelo LocalPlaneScript e a
+-- de casco pelo CombatHUD: as duas leem o mesmo valor e saem juntas.
+local SLIDE_DISTANCE = 0.9 -- em largura normalizada da tela (-1..1)
+local slide = 0
+
+-- Cores — monocromático branco sobre placa escura, igual ao inventário e ao
+-- HealthHUD: a hierarquia vem da transparência, não da cor
+local WHITE = Color3.fromRGB(255, 255, 255)
 local C = {
-	panelBg  = Color3.fromRGB(6, 10, 22),
-	slotBg   = Color3.fromRGB(12, 18, 35),
-	border   = Color3.fromRGB(0, 200, 240),
-	title    = Color3.fromRGB(0, 200, 240),
-	value    = Color3.fromRGB(240, 250, 255),
-	unitDim  = Color3.fromRGB(80, 110, 140),
+	plate    = Color3.fromRGB(10, 11, 14),
+	line     = WHITE,
+	text     = WHITE,
+}
+local T = {
+	plate    = 0.32,  -- a placa é o que dá contraste ao branco contra o céu
+	line     = 0.85,  -- borda em repouso
+	lineMax  = 0.35,  -- borda na velocidade máxima (acende com o motor)
+	title    = 0.35,
+	unit     = 0.62,
 }
 
 -- Escala da cor da velocidade (branco → ciano → branco, igual ao engine).
@@ -143,8 +169,8 @@ function SpeedHUD:_build()
 	local container = Instance.new("Frame")
 	container.Name                = "Container"
 	container.Size                = UDim2.new(1, 0, 1, 0)
-	container.BackgroundColor3    = C.panelBg
-	container.BackgroundTransparency = 0.4
+	container.BackgroundColor3    = C.plate
+	container.BackgroundTransparency = T.plate
 	container.BorderSizePixel     = 0
 	container.Parent              = self._gui
 
@@ -153,9 +179,9 @@ function SpeedHUD:_build()
 	corner.Parent = container
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Color       = C.border
+	stroke.Color       = C.line
 	stroke.Thickness   = 2
-	stroke.Transparency = 0.4
+	stroke.Transparency = T.line
 	stroke.Parent      = container
 	self._stroke = stroke
 
@@ -174,7 +200,8 @@ function SpeedHUD:_build()
 	titleLabel.Position             = UDim2.new(0, 0, 0, 0)
 	titleLabel.BackgroundTransparency = 1
 	titleLabel.Text                 = "SPEED"
-	titleLabel.TextColor3           = C.title
+	titleLabel.TextColor3           = C.text
+	titleLabel.TextTransparency     = T.title
 	titleLabel.TextScaled           = true
 	titleLabel.Font                 = Enum.Font.Jura
 	titleLabel.TextXAlignment       = Enum.TextXAlignment.Left
@@ -187,7 +214,7 @@ function SpeedHUD:_build()
 	valueLabel.Position             = UDim2.new(0, 0, 0.42, 0)
 	valueLabel.BackgroundTransparency = 1
 	valueLabel.Text                 = "0"
-	valueLabel.TextColor3           = C.value
+	valueLabel.TextColor3           = C.text
 	valueLabel.TextScaled           = true
 	valueLabel.FontFace             = Font.new(
 		"rbxasset://fonts/families/Jura.json",
@@ -205,7 +232,8 @@ function SpeedHUD:_build()
 	unitLabel.Position             = UDim2.new(0.72, 0, 0.68, 0)
 	unitLabel.BackgroundTransparency = 1
 	unitLabel.Text                 = "u/s"
-	unitLabel.TextColor3           = C.unitDim
+	unitLabel.TextColor3           = C.text
+	unitLabel.TextTransparency     = T.unit
 	unitLabel.TextScaled           = true
 	unitLabel.Font                 = Enum.Font.Jura
 	unitLabel.TextXAlignment       = Enum.TextXAlignment.Right
@@ -222,17 +250,10 @@ function SpeedHUD:SetSpeed(speed: number)
 	local rounded = math.floor(speed)
 	self._valueLabel.Text = tostring(rounded)
 
-	-- Cor do valor espelha o efeito do engine (branco → ciano → branco)
+	-- A borda acende com a potência (branco, só a transparência muda)
 	local maxSpeed = self._maxSpeed or findSeatedMaxSpeed() or FALLBACK_MAX_SPEED
 	local power = math.clamp(speed / maxSpeed, 0, 1)
-	local color
-	if power < 0.5 then
-		color = Color3.new(1, 1, 1):Lerp(Color3.fromRGB(0, 200, 255), power * 2)
-	else
-		color = Color3.fromRGB(0, 200, 255):Lerp(Color3.new(1, 1, 1), (power - 0.5) * 2)
-	end
-	self._valueLabel.TextColor3 = color
-	self._stroke.Color          = color
+	self._stroke.Transparency = T.line + (T.lineMax - T.line) * power
 end
 
 --- Fixa o teto da escala de cor. nil volta a ler do Configurations da nave.
@@ -262,21 +283,50 @@ end
 -- Camera follow (idêntico ao InventoryHUD)
 -- ═══════════════════════════════════════════════════════════
 
+-- Tamanho da placa (já escalado), pra quem empilha outro holograma embaixo
+SpeedHUD.PART_SIZE = PART_SIZE
+SpeedHUD.SCALE = SCALE
+SpeedHUD.REFERENCE_FOV = REFERENCE_FOV
+
+--- 0 = placas na tela, 1 = fora dela (já com easing aplicado por quem chama).
+function SpeedHUD.SetSlide(alpha: number)
+	slide = math.clamp(alpha, 0, 1)
+end
+
+function SpeedHUD.GetSlide(): number
+	return slide
+end
+
+--- Distância da placa à câmera pro FOV atual: no FOV de referência é DEPTH;
+--- com FOV maior, mais perto, na proporção exata que mantém o tamanho na tela.
+--- Todo holograma de voo usa isto (Holo), pra ficarem no mesmo plano.
+function SpeedHUD.GetDepth(cam: Camera): number
+	local reference = math.tan(math.rad(REFERENCE_FOV) / 2)
+	return DEPTH * reference / math.tan(math.rad(cam.FieldOfView) / 2)
+end
+
+--- CFrame da placa de velocidade na frente da câmera. offsetY (studs) desce
+--- ou sobe a partir dela, no mesmo plano e com a mesma inclinação: é assim
+--- que outro holograma (casco/armas) fica alinhado logo abaixo.
+function SpeedHUD.GetScreenCFrame(cam: Camera, offsetY: number?): CFrame
+	local depth  = SpeedHUD.GetDepth(cam)
+	local halfH  = depth * math.tan(math.rad(cam.FieldOfView) / 2)
+	local halfW  = halfH * (cam.ViewportSize.X / cam.ViewportSize.Y)
+
+	local screenX = (if IS_MOBILE then SCREEN_X_MOBILE else SCREEN_X) - SLIDE_DISTANCE * slide
+	local worldX = halfW * screenX
+	local worldY = halfH * SCREEN_Y + (offsetY or 0)
+
+	return cam.CFrame
+		* CFrame.new(worldX, worldY, -depth)
+		* CFrame.Angles(0, math.rad(ROT_Y), 0)
+end
+
 function SpeedHUD:_onRender()
 	local cam = workspace.CurrentCamera
 	if not cam then return end
 
-	local fovRad = math.rad(cam.FieldOfView)
-	local halfH  = DEPTH * math.tan(fovRad / 2)
-	local halfW  = halfH * (cam.ViewportSize.X / cam.ViewportSize.Y)
-
-	local screenX = if IS_MOBILE then SCREEN_X_MOBILE else SCREEN_X
-	local worldX = halfW * screenX
-	local worldY = halfH * SCREEN_Y
-
-	self._part.CFrame = cam.CFrame
-		* CFrame.new(worldX, worldY, -DEPTH)
-		* CFrame.Angles(0, math.rad(ROT_Y), 0)
+	self._part.CFrame = SpeedHUD.GetScreenCFrame(cam)
 end
 
 return SpeedHUD

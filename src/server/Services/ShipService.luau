@@ -39,6 +39,7 @@ local PlaceConfig = require(ReplicatedStorage.Shared.PlaceConfig)
 local WarpModule = require(ReplicatedStorage.Shared.WarpModule)
 local MapConfig = require(ReplicatedStorage.Shared.MapConfig)
 local InventoryModule = require(ReplicatedStorage.Shared.InventoryModule)
+local CombatConfig = require(ReplicatedStorage.Shared.CombatConfig)
 
 local ACTION_COOLDOWN = 0.5
 local SHIP_SPACING = 6 -- studs entre naves lado a lado no LandingPad
@@ -59,6 +60,7 @@ local Reason = {
 	STOW = "STOW",
 	IDLE = "IDLE",
 	RELAUNCH = "RELAUNCH",
+	DESTROYED = "DESTROYED",
 }
 
 -- Comandos de teste no chat. Só no Studio ou pra estes nomes.
@@ -114,6 +116,7 @@ type ShipRecord = {
 	dockingPad: BasePart?, -- pad sobre o qual a contagem de pouso está correndo
 	dockingAt: number?, -- tempo do servidor em que a ancoragem se completa
 	lastNear: number, -- os.clock() da última vez que o dono estava perto
+	destroying: boolean?, -- casco zerado: saindo de cena (ver DestroyShip)
 	conns: { RBXScriptConnection },
 }
 
@@ -1162,7 +1165,8 @@ function ShipService:_maintain()
 	for userId, record in self._ships do
 		local player = Players:GetPlayerByUserId(userId)
 		local model = record.model
-		if not player or not model.Parent then
+		-- Destroço saindo de cena (DestroyShip): não ancora nem expira
+		if not player or not model.Parent or record.destroying then
 			continue
 		end
 
@@ -1501,6 +1505,117 @@ function ShipService:StowShip(player: Player): (boolean, string)
 	end
 	self:_pushState(player)
 	return true, Codes.OK
+end
+
+--[[
+	Casco zerado em combate (chamado pelo CombatService). A nave explode e
+	some; o dono reaparece no spawn do Place se estava nela ou tinha saltado
+	por perto — senão ficaria à deriva no espaço sem nave.
+
+	A ordem importa: o piloto SAI do assento antes de a nave sumir. Destruir
+	com ele sentado deixa o LocalPlaneScript preso no loop de voo (câmera
+	travada, mouse preso) e o PlaneScript nunca roda a saída do assento
+	(HUDs de vida e inventário ficam escondidos). Então:
+	  1. levanta o piloto e trava o assento
+	  2. esconde e congela a nave, explosão no lugar
+	  3. só depois de UNSEAT_GRACE a instância é destruída
+
+	expected: a instância que o combate viu morrer. Se o jogador já lançou
+	outra nesse meio tempo, a nova não é tocada.
+]]
+local UNSEAT_GRACE = 0.5
+
+local function hideWreck(model: Model)
+	for _, inst in model:GetDescendants() do
+		if inst:IsA("BasePart") then
+			inst.Anchored = true
+			inst.Transparency = 1
+			inst.CanCollide = false
+			inst.CanQuery = false
+			inst.CanTouch = false
+		elseif inst:IsA("Decal") then
+			inst.Transparency = 1
+		elseif
+			inst:IsA("ParticleEmitter")
+			or inst:IsA("Beam")
+			or inst:IsA("Trail")
+			or inst:IsA("Light")
+			or inst:IsA("ProximityPrompt")
+			or inst:IsA("LayerCollector")
+		then
+			(inst :: any).Enabled = false
+		end
+	end
+end
+
+function ShipService:DestroyShip(player: Player, expected: Model?): boolean
+	local record = self._ships[player.UserId]
+	if not record or (expected and record.model ~= expected) or record.destroying then
+		return false
+	end
+	if PlaceConfig.IsPlanet() then
+		return false
+	end
+	record.destroying = true
+
+	local model = record.model
+	local position = getShipPosition(model)
+	local root = getRoot(player)
+	local humanoid = getHumanoid(player)
+	local seat = getSeat(model)
+	local stranded = self:_isPiloting(player, model)
+		or (root ~= nil and (root.Position - position).Magnitude <= ShipData.IDLE_NEAR_DISTANCE)
+
+	self:_cancelWarp(player, "CANCELLED")
+
+	-- 1. Fora do assento, e sem volta: assento desabilitado ignora Sit
+	if seat then
+		local weld = seat:FindFirstChild("SeatWeld")
+		if weld then
+			weld:Destroy()
+		end
+		seat.Disabled = true
+	end
+	if humanoid and humanoid.SeatPart then
+		humanoid.Sit = false
+	end
+
+	-- 2. Some da vista na hora; a instância ainda existe pro client sair do voo
+	hideWreck(model)
+
+	local explosion = Instance.new("Explosion")
+	explosion.Position = position
+	explosion.BlastRadius = 12
+	explosion.BlastPressure = 0
+	explosion.DestroyJointRadiusPercent = 0
+	explosion.Parent = workspace
+
+	-- 3. Instância destruída depois do client ter visto o assento vazio
+	task.delay(UNSEAT_GRACE, function()
+		if self._ships[player.UserId] == record and self:_despawn(player, Reason.DESTROYED) then
+			self:_pushState(player)
+		end
+	end)
+
+	if stranded then
+		-- Parado no lugar da explosão até reaparecer, em vez de sair caindo
+		if root then
+			root.Anchored = true
+		end
+		local character = player.Character
+		task.delay(CombatConfig.RESPAWN_DELAY, function()
+			if player.Parent and player.Character == character then
+				player:LoadCharacter()
+			end
+		end)
+	end
+
+	return true
+end
+
+--- Dentro do túnel de warp (entre a carga cheia e a chegada).
+function ShipService:IsWarpTravelling(player: Player): boolean
+	return self._travels[player.UserId] == true
 end
 
 --- Loja fora do escopo desta entrega (§0).

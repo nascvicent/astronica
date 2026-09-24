@@ -269,7 +269,7 @@ function ShipMenuHUD:_renderStatus()
 	setStat(rows.miningQuality, formatNumber(stats.miningQuality), stats.miningQuality / BAR_MAX.miningQuality)
 
 	local hull = readLiveHull(self._model) or stats.maxHull
-	setStat(rows.hull, string.format("%s / %s", formatNumber(hull), formatNumber(stats.maxHull)), stats.maxHull / BAR_MAX.hull)
+	setStat(rows.hull, string.format("%s / %s", formatNumber(math.ceil(hull)), formatNumber(stats.maxHull)), stats.maxHull / BAR_MAX.hull)
 
 	local range = if stats.warpRange <= 0 then "Ilimitado" else formatNumber(stats.warpRange) .. " studs"
 	setStat(rows.warp, string.format("%s  ·  carga %ss", range, formatNumber(stats.warpChargeTime)))

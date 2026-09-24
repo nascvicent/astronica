@@ -4,7 +4,9 @@
 
 	Duas camadas:
 	  ViewportFrame   — maquete: esferas (ou o visual copiado da cena), anéis de
-	                    órbita e o disco do plano. Câmera própria, orbital.
+	                    órbita, o disco do plano e as zonas seguras do
+	                    combate (esferas verdes, CombatConfig). Câmera própria,
+	                    orbital.
 	  Marcadores 2D   — ícones, nomes e as linhas verticais até o plano, por
 	                    cima do viewport. Cada frame a posição 3D de cada corpo
 	                    é projetada pela câmera do mapa (_project), então os
@@ -27,7 +29,9 @@ local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MapConfig = require(ReplicatedStorage.Shared.MapConfig)
+local CombatConfig = require(ReplicatedStorage.Shared.CombatConfig)
 local UIStyle = require(script.Parent.UIStyle)
+local Holo = require(script.Parent.Holo)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -70,6 +74,12 @@ local MARKER_GAP = 12 -- entre o topo da esfera e o ícone
 local STAR_COUNT = 120
 local INFO_REFRESH = 0.25
 local ZOOM_ACTION = "SystemMapZoom"
+
+-- Zona segura na maquete: esfera translúcida + anel no "equador"
+local SAFE_COLOR = UIStyle.C.positive
+local SAFE_TRANSPARENCY = 0.86
+local SAFE_RING_TRANSPARENCY = 0.45
+local SAFE_MIN_RADIUS = 3 -- nunca menor que o próprio corpo na maquete
 
 local MapHUD = {}
 MapHUD.__index = MapHUD
@@ -287,6 +297,18 @@ function MapHUD:_build()
 		else "ARRASTE  girar    ·    RODA  zoom    ·    CLIQUE  selecionar"
 	self._hint = hint
 
+	-- Legenda das zonas (só em Place com combate)
+	local legend = UIStyle.label(gui, "Legend", 11, UIStyle.FONT_MEDIUM, T.textSecondary)
+	legend.AnchorPoint = Vector2.new(0, 1)
+	legend.Size = UDim2.fromOffset(460, 16)
+	legend.RichText = true
+	legend.Text = string.format(
+		'<font color="#%s">●</font>  ZONA SEGURA    ·    FORA DELA, COMBATE LIBERADO',
+		SAFE_COLOR:ToHex()
+	)
+	legend.Visible = CombatConfig.IsCombatPlace()
+	self._legend = legend
+
 	self:_buildInfo()
 
 	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
@@ -408,13 +430,14 @@ function MapHUD:_buildInfo()
 	end
 
 	self._infoDistanceRow, self._infoDistance = row(4, "DISTÂNCIA")
-	self._infoWarpRow, self._infoWarp = row(5, "WARP")
+	self._infoZoneRow, self._infoZone = row(5, "ZONA")
+	self._infoWarpRow, self._infoWarp = row(6, "WARP")
 
 	-- Warp direto do mapa: só pilotando e com o destino no alcance
 	local warp, setWarp = UIStyle.button(info, "WARP", true)
 	warp.Name = "Warp"
 	warp.Size = UDim2.new(1, 0, 0, 34)
-	warp.LayoutOrder = 6
+	warp.LayoutOrder = 7
 	warp.Visible = false
 	warp.Activated:Connect(function()
 		self:ActivateWarp()
@@ -423,30 +446,51 @@ function MapHUD:_buildInfo()
 	self._setWarpButton = setWarp
 end
 
---- Botão MAPA na HUD normal (fora do mapa). Vive numa ScreenGui própria pra
---- continuar na tela com o mapa fechado.
-function MapHUD:_buildToggle()
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "SystemMapButton"
-	gui.ResetOnSpawn = false
-	gui.IgnoreGuiInset = true
-	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	gui.DisplayOrder = 5
-	gui.Enabled = false
-	gui.Parent = playerGui
-	self._toggleGui = gui
+--[[
+	Botão MAPA da HUD normal (com o mapa fechado): holograma no canto superior
+	direito, espelho da placa de velocidade (mesma altura, inclinação oposta),
+	no mesmo sistema da quick bar e do botão de inventário. O [FECHAR] de
+	dentro do mapa continua 2D: o mapa é painel de tela cheia.
+]]
+local TOGGLE_SIZE = Vector2.new(0.36, 0.13) -- studs, escala do PC
+local TOGGLE_SCREEN_X = if UIStyle.IS_MOBILE then 0.6 else 0.8
+local TOGGLE_SCREEN_Y = 0.8
+local TOGGLE_ROT_Y = -15
+local TOGGLE_TEXT_SIZE = 30 -- pixels da SurfaceGui
 
-	local toggle, _ = UIStyle.keyHint(gui, "M", "MAPA")
-	toggle.Name = "Toggle"
-	toggle.Activated:Connect(function()
+function MapHUD:_buildToggle()
+	local holo = Holo.new("SystemMapButton", TOGGLE_SIZE, function(cam)
+		return Holo.ScreenCFrame(cam, TOGGLE_SCREEN_X, TOGGLE_SCREEN_Y, TOGGLE_ROT_Y)
+	end)
+	self._toggleHolo = holo
+
+	local container, stroke = holo:Plate()
+
+	local button = Instance.new("TextButton")
+	button.Name = "Toggle"
+	button.Size = UDim2.fromScale(1, 1)
+	button.BackgroundTransparency = 1
+	button.AutoButtonColor = false
+	button.Text = if UIStyle.IS_MOBILE then "MAPA" else "[M]  MAPA"
+	button.TextColor3 = Holo.THEME.white
+	button.TextTransparency = Holo.T.title
+	button.TextSize = TOGGLE_TEXT_SIZE
+	button.FontFace = Holo.FONT_VALUE
+	button.Parent = container
+
+	-- Hover igual ao botão de inventário: texto e borda acendem
+	button.MouseEnter:Connect(function()
+		button.TextTransparency = Holo.T.value
+		stroke.Transparency = Holo.T.lineHover
+	end)
+	button.MouseLeave:Connect(function()
+		button.TextTransparency = Holo.T.title
+		stroke.Transparency = Holo.T.line
+	end)
+	button.Activated:Connect(function()
 		if self._onToggle then
 			self._onToggle()
 		end
-	end)
-	self._toggle = toggle
-
-	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		self:_layout()
 	end)
 end
 
@@ -463,15 +507,14 @@ function MapHUD:_layout()
 	self._header.Position = UDim2.new(0.5, 0, 0, top)
 	self._header.Size = UDim2.fromOffset(math.clamp(size.X - 2 * (margin + 150), 200, 520), 52)
 
-	-- Dicas de tecla: pilha no canto superior direito (slot 1 = mapa; o
-	-- WarpHUD usa o slot 2)
+	-- [FECHAR] no canto superior direito
 	self._close.Position = UDim2.new(1, -margin, 0, UIStyle.hintSlotY(top, 1))
-	if self._toggle then -- o _build roda antes do _buildToggle
-		self._toggle.Position = UDim2.new(1, -margin, 0, UIStyle.hintSlotY(top, 1))
-	end
 
 	self._hint.Position = UDim2.new(0, margin, 1, -margin)
 	self._hint.Visible = size.X >= 700 or not compact
+	-- Legenda logo acima da dica (ou no lugar dela, se a dica sumiu)
+	local legendBottom = if self._hint.Visible then margin + 22 else margin
+	self._legend.Position = UDim2.new(0, margin, 1, -legendBottom)
 
 	self._info.Position = UDim2.new(1, -margin, 1, -margin)
 	self._info.Size = UDim2.fromOffset(math.min(PANEL_WIDTH, size.X - margin * 2), 0)
@@ -668,6 +711,40 @@ function MapHUD:_buildWorld(bodies)
 				entry.ringPivotY = pivot.Y
 			end
 		end
+	end
+
+	self:_buildSafeZones()
+end
+
+--[[
+	Zonas seguras (CombatConfig.GetSafeSpheres) na maquete. A escala do mapa
+	é comprimida (SCALE_EXPONENT), então o raio não é linear: mede a borda de
+	fora e a de dentro da esfera na direção do centro e usa a média.
+]]
+function MapHUD:_buildSafeZones()
+	if not CombatConfig.IsCombatPlace() then
+		return
+	end
+
+	for _, zone in CombatConfig.GetSafeSpheres() do
+		local mapPos = self:_toMap(zone.position)
+		local offset = zone.position - self._center
+		local horizontal = Vector3.new(offset.X, 0, offset.Z)
+		local dir = if horizontal.Magnitude > 0.01 then horizontal.Unit else Vector3.xAxis
+		local outer = (self:_toMap(zone.position + dir * zone.radius) - mapPos).Magnitude
+		local inner = (self:_toMap(zone.position - dir * zone.radius) - mapPos).Magnitude
+		local radius = math.max((outer + inner) / 2, SAFE_MIN_RADIUS)
+
+		local sphere = inertPart()
+		sphere.Name = "SafeZone_" .. zone.id
+		sphere.Shape = Enum.PartType.Ball
+		sphere.Size = Vector3.one * radius * 2
+		sphere.Position = mapPos
+		sphere.Color = SAFE_COLOR
+		sphere.Transparency = SAFE_TRANSPARENCY
+		sphere.Parent = self._world
+
+		self:_makeRing(mapPos, radius, RING_THICKNESS, SAFE_RING_TRANSPARENCY, SAFE_COLOR)
 	end
 end
 
@@ -920,6 +997,15 @@ function MapHUD:_refreshInfo()
 		self._infoDistance.Text = formatDistance(info.distance)
 	end
 
+	-- Combate: o corpo está dentro de uma zona segura?
+	local combat = CombatConfig.IsCombatPlace()
+	self._infoZoneRow.Visible = combat
+	if combat then
+		local safe = CombatConfig.IsInSafeZone(entry.body.position)
+		self._infoZone.Text = if safe then "segura" else "combate"
+		self._infoZone.TextColor3 = if safe then C.positive else C.negative
+	end
+
 	-- WARP só aparece pilotando e em destino de warp (o provider manda nil fora disso)
 	local warp = info.warp
 	self._infoWarpRow.Visible = warp ~= nil
@@ -1101,7 +1187,7 @@ function MapHUD:Open(bodies, systemName: string)
 	self._focus, self._focusTarget = Vector3.zero, Vector3.zero
 
 	self._gui.Enabled = true
-	self._toggleGui.Enabled = false
+	self._toggleHolo:SetVisible(false)
 	self:_layout()
 	self:_connectInput()
 	self:_step(0)
@@ -1115,7 +1201,7 @@ function MapHUD:Close()
 	self:_disconnectInput()
 	self._gui.Enabled = false
 	self:_clearWorld()
-	self._toggleGui.Enabled = self._available
+	self._toggleHolo:SetVisible(self._available == true)
 end
 
 --- Warp pro corpo selecionado, se estiver no alcance (botão ou [F]).
@@ -1142,10 +1228,7 @@ function MapHUD:SetAvailable(available: boolean)
 		return
 	end
 	self._available = available
-	self._toggleGui.Enabled = available and not self._open
-	if available then
-		self:_layout()
-	end
+	self._toggleHolo:SetVisible(available and not self._open)
 end
 
 function MapHUD:SetToggleHandler(handler: () -> ())
