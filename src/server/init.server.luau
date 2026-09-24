@@ -10,6 +10,8 @@ require(script.Services.GravityService)
 require(script.Services.MiningService)
 require(script.Services.ToolService)
 require(script.Services.ShipService)
+require(script.Services.CombatService)
+require(script.Services.SuitService)
 
 -- Start Knit
 Knit.Start():catch(warn):await()

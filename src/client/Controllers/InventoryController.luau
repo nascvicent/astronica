@@ -167,6 +167,15 @@ function InventoryController:SetShipInfo(state)
 	self._hud:SetShipInfo(state)
 end
 
+--- Estado dos trajes pra aba "Traje". Chamado pelo SuitController.
+function InventoryController:SetSuitState(state)
+	self._hud:SetSuitState(state)
+end
+
+function InventoryController:SetSuitHandlers(handlers)
+	self._hud:SetSuitHandlers(handlers)
+end
+
 function InventoryController:GetInventory()
 	return self._inventory
 end
