@@ -85,6 +85,26 @@ function InventoryController:KnitStart()
 		end)
 	end)
 
+	self._hud:SetDeleteHandler(function(slotIndex: number)
+		InventoryService:DeleteSlot(slotIndex):andThen(function(ok: boolean, msg: string)
+			if not ok then
+				warn(string.format("[InventoryController] DeleteSlot %d: %s", slotIndex, tostring(msg)))
+			end
+		end):catch(function(err)
+			warn("[InventoryController] DeleteSlot failed:", err)
+		end)
+	end)
+
+	self._hud:SetBackpackUpgradeHandler(function()
+		InventoryService:UpgradeBackpack():andThen(function(ok: boolean, msg: string)
+			if not ok then
+				self._hud:FlashBackpackMessage(msg)
+			end
+		end):catch(function(err)
+			warn("[InventoryController] UpgradeBackpack failed:", err)
+		end)
+	end)
+
 	self:_setupHotbar()
 end
 

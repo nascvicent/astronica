@@ -308,9 +308,10 @@ ShipData.Ships.deimos = {
 		miningQuality = 45,
 		hull = 85,
 		turnSpeed = 25,
-		maxShots = 10,
+		-- Mais tiros antes de superaquecer, cadência um pouco mais lenta
+		maxShots = 15,
 		cooldownTime = 5,
-		fireRate = 0.15,
+		fireRate = 0.17,
 	},
 	gunsEnabled = true,
 	warp = { range = 10000, chargeTime = 2 },

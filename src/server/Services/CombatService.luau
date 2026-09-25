@@ -23,6 +23,12 @@
 	  também vão minerar, e minerar perto da estação não pode ser proibido.
 	  Só travam dentro da HangarZone (o hangar em si), ancoradas e no túnel.
 
+	MINERAÇÃO
+	  O mesmo projétil minera: a cada passo ele também pergunta ao
+	  ShipMiningService se cruzou uma rocha de Workspace/Ores, e o que vier
+	  primeiro (rocha ou o resto) leva o acerto. Dano de mineração vem da
+	  MiningQuality da nave, não do Damage (OreConfig.ShotMiningDamage).
+
 	DANO EM NAVE — só vale quando
 	  - o Place é de espaço
 	  - atirador e alvo estão fora de zona segura (o tiro de dentro dela
@@ -47,6 +53,7 @@ local RunService = game:GetService("RunService")
 local ShipData = require(ReplicatedStorage.Shared.ShipData)
 local PlaceConfig = require(ReplicatedStorage.Shared.PlaceConfig)
 local CombatConfig = require(ReplicatedStorage.Shared.CombatConfig)
+local OreConfig = require(ReplicatedStorage.Shared.OreConfig)
 
 -- Fallbacks iguais aos do PlaneScript antigo, pra nave sem o Value
 local DEFAULT_MAX_SHOTS = 20
@@ -77,6 +84,8 @@ type Projectile = {
 	shooter: Player,
 	shooterModel: Model,
 	damage: number,
+	miningDamage: number,
+	miningQuality: number,
 	position: Vector3,
 	direction: Vector3,
 	travelled: number,
@@ -299,11 +308,19 @@ function CombatService:_fire(state: ShipState, pilot: Player, fireRate: number)
 	end
 
 	local damage = CombatConfig.ShotDamage(readConfig(model, "Damage", 0), fireRate, #muzzles)
+	local miningQuality = readConfig(model, "MiningQuality", 0)
+	local miningDamage = OreConfig.ShotMiningDamage(miningQuality, fireRate, #muzzles)
 
-	-- Um filtro por rajada: os projéteis dela ignoram a própria nave e o piloto
+	-- Um filtro por rajada: os projéteis dela ignoram a própria nave e o piloto.
+	-- As rochas de minério também saem daqui: no servidor elas estão paradas, e
+	-- o acerto nelas é o do ShipMiningService (na pose animada)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { model, pilot.Character :: Instance }
+	local filter: { Instance } = { model, pilot.Character :: Instance }
+	for _, root in self._mining:GetOreRoots() do
+		table.insert(filter, root)
+	end
+	params.FilterDescendantsInstances = filter
 
 	local shots = {}
 	for _, muzzle in muzzles do
@@ -314,6 +331,8 @@ function CombatService:_fire(state: ShipState, pilot: Player, fireRate: number)
 			shooter = pilot,
 			shooterModel = model,
 			damage = damage,
+			miningDamage = miningDamage,
+			miningQuality = miningQuality,
 			position = origin,
 			direction = direction,
 			travelled = 0,
@@ -390,7 +409,23 @@ function CombatService:_stepProjectile(projectile: Projectile, dt: number): bool
 
 	while remaining > 0 do
 		local step = math.min(remaining, 1000)
-		local result = CombatConfig.CastShot(projectile.position, projectile.direction * step, projectile.params)
+		local displacement = projectile.direction * step
+		local result = CombatConfig.CastShot(projectile.position, displacement, projectile.params)
+
+		-- Rocha de minério no caminho, antes do que o traçado normal achou?
+		local ore, orePosition, oreDistance =
+			self._mining:CastOres(projectile.position, displacement, CombatConfig.HIT_RADIUS)
+		if ore and (not result or (oreDistance :: number) <= result.Distance) then
+			self._mining:HitOre(
+				ore,
+				projectile.shooter,
+				projectile.miningDamage,
+				projectile.miningQuality,
+				orePosition :: Vector3
+			)
+			return true
+		end
+
 		if result then
 			self:_onHit(projectile, result.Instance)
 			return true
@@ -520,6 +555,7 @@ end
 
 function CombatService:KnitStart()
 	self._shipService = Knit.GetService("ShipService")
+	self._mining = Knit.GetService("ShipMiningService")
 
 	if not CombatConfig.IsCombatPlace() then
 		print("[CombatService] Place de planeta — combate desligado")

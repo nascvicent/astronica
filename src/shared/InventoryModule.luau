@@ -10,6 +10,22 @@ local InventoryModule = {}
 InventoryModule.DEFAULT_SLOTS = 10
 InventoryModule.MAX_STACK = 64
 
+-- Mochila: cada nível dá mais slots e deixa a mochila do traje mais alta
+-- (Scale.Y do SpecialMesh dela, ver SuitConfig.BACKPACK_NAME).
+-- price = Lúmens pra subir PRA este nível.
+InventoryModule.BackpackLevels = {
+	{ slots = 10, height = 0.6, price = 0 },
+	{ slots = 15, height = 0.7, price = 500 },
+	{ slots = 20, height = 0.8, price = 1500 },
+	{ slots = 25, height = 0.9, price = 3500 },
+	{ slots = 30, height = 1.0, price = 7500 },
+}
+InventoryModule.MAX_BACKPACK_LEVEL = #InventoryModule.BackpackLevels
+InventoryModule.MAX_SLOTS = InventoryModule.BackpackLevels[InventoryModule.MAX_BACKPACK_LEVEL].slots
+
+-- Nível da mochila espelhado no Player (o SuitService e o preview leem daqui)
+InventoryModule.BACKPACK_ATTRIBUTE = "BackpackLevel"
+
 -- Quantos slots do começo do inventário formam a hotbar (teclas 1..N).
 -- Client (HUD + teclas) e server (ToolService) leem daqui.
 InventoryModule.HOTBAR_SLOTS = 3
@@ -82,6 +98,13 @@ InventoryModule.Items = {
 		maxStack = 32,
 		category = "resource",
 	},
+	gravitita = {
+		name = "Gravitita",
+		description = "Minério raro que dobra a gravidade à sua volta: flutua sozinho e puxa poeira para a própria órbita. Cobiçado para motores de warp e estabilizadores.",
+		rarity = "rare",
+		maxStack = 16,
+		category = "resource",
+	},
 	health_potion = {
 		name = "Health Potion",
 		description = "Dose de nanogel regenerativo. Recupera parte da vida ao ser consumida.",
@@ -97,6 +120,8 @@ InventoryModule.Items = {
 		category = "tool",
 		-- Nome da Tool em ServerStorage.Tools que este item equipa
 		toolTemplate = "LaserPistol",
+		-- Ferramenta inicial: descartar deixaria o jogador sem como minerar
+		canDelete = false,
 	},
 	star_map = {
 		name = "Star Map",
@@ -135,6 +160,23 @@ end
 function InventoryModule.GetToolTemplate(itemId: string): string?
 	local def = InventoryModule.Items[itemId]
 	return def and (def :: any).toolTemplate or nil
+end
+
+--- Item pode ser descartado do inventário (padrão: sim).
+function InventoryModule.CanDelete(itemId: string): boolean
+	local def = InventoryModule.Items[itemId]
+	return def ~= nil and (def :: any).canDelete ~= false
+end
+
+function InventoryModule.ClampBackpackLevel(level: any): number
+	if typeof(level) ~= "number" or level ~= level then
+		return 1
+	end
+	return math.clamp(math.floor(level), 1, InventoryModule.MAX_BACKPACK_LEVEL)
+end
+
+function InventoryModule.GetBackpackLevel(level: number)
+	return InventoryModule.BackpackLevels[InventoryModule.ClampBackpackLevel(level)]
 end
 
 function InventoryModule.IsValidItem(itemId: string): boolean

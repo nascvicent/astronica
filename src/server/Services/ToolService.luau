@@ -165,6 +165,15 @@ function ToolService:Unequip(player: Player): number
 	return 0
 end
 
+--- Um slot foi esvaziado sem passar pelo equip (ex: item descartado). Se era o
+--- slot na mão, guarda; Tool sem item por trás é destruída.
+function ToolService:OnSlotCleared(player: Player, slotIndex: number)
+	if self._equipped[player.UserId] == slotIndex then
+		self:Unequip(player)
+	end
+	self:_purgeUnbacked(player)
+end
+
 --- Equipa o item da hotbar naquele slot. Apertar o slot já equipado desequipa.
 --- Retorna o slot que ficou equipado (0 = nenhum).
 function ToolService:EquipSlot(player: Player, slotIndex: number): number

@@ -180,6 +180,16 @@ function SuitBuilder.SetVisorColor(character: Model, color: Color3)
 	display.Color = color
 end
 
+--- Altura da mochila (Scale.Y do SpecialMesh), mantendo largura e profundidade.
+function SuitBuilder.SetBackpackHeight(character: Model, height: number)
+	local backpack = character:FindFirstChild(SuitConfig.BACKPACK_NAME)
+	local mesh = backpack and backpack:FindFirstChildWhichIsA("SpecialMesh", true)
+	if not mesh then return end
+
+	local scale = mesh.Scale
+	mesh.Scale = Vector3.new(scale.X, height, scale.Z)
+end
+
 --- Liga/desliga as luzes (lanterna do capacete) do personagem do traje.
 function SuitBuilder.SetLights(character: Model, on: boolean)
 	for _, d in character:GetDescendants() do
