@@ -14,11 +14,10 @@ local function makeKey(userId: number): string
 	return KEY_PREFIX .. tostring(userId)
 end
 
---- Saves antigos foram criados com mais slots do que DEFAULT_SLOTS. Traz o que
+--- Saves antigos foram criados com mais slots do que a mochila dá. Traz o que
 --- estava além do limite para espaços livres dentro dele; se não couber tudo,
 --- mantém o tamanho antigo em vez de sumir com item do jogador.
-local function shrinkToDefaultSlots(data, playerName: string)
-	local limit = InventoryModule.DEFAULT_SLOTS
+local function shrinkToSlots(data, limit: number, playerName: string)
 	if data.maxSlots <= limit then
 		return
 	end
@@ -66,7 +65,9 @@ local InventoryService = Knit.CreateService({
 		ToggleHUD = Knit.CreateSignal(), -- (show: boolean)
 	},
 
-	_inventoryData = {} :: { [number]: { slots: { [number]: any }, maxSlots: number } },
+	-- backpackLevel mora aqui (e não no PlayerDataService) pra andar sempre
+	-- junto com o maxSlots que ele define
+	_inventoryData = {} :: { [number]: { slots: { [number]: any }, maxSlots: number, backpackLevel: number } },
 	_dataLoaded = {} :: { [number]: boolean },
 
 	-- Jogadores cujo GetAsync falhou: têm inventário vazio em memória que NÃO
@@ -100,6 +101,17 @@ function InventoryService.Client:MoveItem(player: Player, fromSlot: number, toSl
 
 	-- O MoveItem do servidor já valida os limites contra o maxSlots do jogador
 	return self.Server:MoveItem(player, math.floor(fromSlot), math.floor(toSlot))
+end
+
+function InventoryService.Client:DeleteSlot(player: Player, slotIndex: any): (boolean, string)
+	if typeof(slotIndex) ~= "number" or slotIndex ~= slotIndex then
+		return false, "Invalid slot index"
+	end
+	return self.Server:DeleteSlot(player, math.floor(slotIndex))
+end
+
+function InventoryService.Client:UpgradeBackpack(player: Player): (boolean, string)
+	return self.Server:UpgradeBackpack(player)
 end
 
 -- ============================================================
@@ -219,9 +231,61 @@ end
 function InventoryService:GetInventory(player: Player)
 	local data = self._inventoryData[player.UserId]
 	if not data then
-		return { slots = {}, maxSlots = InventoryModule.DEFAULT_SLOTS }
+		return { slots = {}, maxSlots = InventoryModule.DEFAULT_SLOTS, backpackLevel = 1 }
 	end
-	return { slots = data.slots, maxSlots = data.maxSlots }
+	return { slots = data.slots, maxSlots = data.maxSlots, backpackLevel = data.backpackLevel }
+end
+
+--- Descarta a pilha inteira de um slot.
+function InventoryService:DeleteSlot(player: Player, slotIndex: number): (boolean, string)
+	local data = self._inventoryData[player.UserId]
+	if not data then
+		return false, "Inventário ainda carregando"
+	end
+
+	local slot = data.slots[slotIndex]
+	if not slot then
+		return false, "Slot vazio"
+	end
+	if not InventoryModule.CanDelete(slot.itemId) then
+		return false, "Este item não pode ser descartado"
+	end
+
+	data.slots[slotIndex] = nil
+	self.Client.SlotUpdated:Fire(player, slotIndex, nil)
+
+	-- Item da hotbar equipado: a Tool não pode continuar na mão
+	Knit.GetService("ToolService"):OnSlotCleared(player, slotIndex)
+
+	return true, "OK"
+end
+
+--- Sobe a mochila um nível: mais slots, paga em Lúmens.
+function InventoryService:UpgradeBackpack(player: Player): (boolean, string)
+	local data = self._inventoryData[player.UserId]
+	if not data or self._loadFailed[player.UserId] then
+		return false, "Inventário ainda carregando"
+	end
+
+	local nextLevel = data.backpackLevel + 1
+	local def = InventoryModule.BackpackLevels[nextLevel]
+	if not def then
+		return false, "Mochila já está no nível máximo"
+	end
+
+	local lumens = Knit.GetService("LumenService")
+	if lumens:GetLumens(player) < def.price then
+		return false, "Lúmens insuficientes"
+	end
+	lumens:RemoveLumens(player, def.price)
+
+	data.backpackLevel = nextLevel
+	data.maxSlots = math.max(data.maxSlots, def.slots)
+	player:SetAttribute(InventoryModule.BACKPACK_ATTRIBUTE, nextLevel)
+	self.Client.InventoryChanged:Fire(player, data)
+
+	print(string.format("[InventoryService] %s subiu a mochila pro nível %d (%d slots)", player.Name, nextLevel, data.maxSlots))
+	return true, "OK"
 end
 
 function InventoryService:GetSlot(player: Player, slotIndex: number)
@@ -321,13 +385,19 @@ function InventoryService:_loadPlayerData(player: Player)
 		if not data.maxSlots then
 			data.maxSlots = InventoryModule.DEFAULT_SLOTS
 		end
-		shrinkToDefaultSlots(data, player.Name)
+		data.backpackLevel = InventoryModule.ClampBackpackLevel(data.backpackLevel)
+		local slots = InventoryModule.GetBackpackLevel(data.backpackLevel).slots
+		-- Mochila maior que o save (nível subiu / tabela mudou): cresce
+		data.maxSlots = math.max(data.maxSlots, slots)
+		shrinkToSlots(data, slots, player.Name)
 	else
 		data = {
 			slots = {},
 			maxSlots = InventoryModule.DEFAULT_SLOTS,
+			backpackLevel = 1,
 		}
 	end
+	player:SetAttribute(InventoryModule.BACKPACK_ATTRIBUTE, data.backpackLevel)
 
 	self._inventoryData[userId] = data
 	self._dataLoaded[userId] = true

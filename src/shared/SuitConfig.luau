@@ -35,6 +35,10 @@ SuitConfig.FLASHLIGHT_ATTRIBUTE = "FlashlightOn" -- Player
 SuitConfig.HELMET_NAME = "Space Helmet"
 SuitConfig.DISPLAY_NAME = "Display"
 
+-- Mochila: Accessory com um SpecialMesh dentro. O Scale.Y dele acompanha o
+-- nível da mochila (InventoryModule.BackpackLevels)
+SuitConfig.BACKPACK_NAME = "oxygen"
+
 -- Lanterna: qualquer SpotLight/SurfaceLight/PointLight dentro do personagem do traje
 SuitConfig.FLASHLIGHT_KEY = Enum.KeyCode.L
 SuitConfig.FLASHLIGHT_GAMEPAD = Enum.KeyCode.DPadUp

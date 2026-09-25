@@ -590,6 +590,9 @@ function SuitTab:_mountPreview(suitId: string)
 	if def then
 		SuitBuilder.SetVisorColor(model, def.color)
 	end
+
+	local level = player:GetAttribute(InventoryModule.BACKPACK_ATTRIBUTE)
+	SuitBuilder.SetBackpackHeight(model, InventoryModule.GetBackpackLevel(level or 1).height)
 end
 
 --- Gira o preview. Chamado pelo loop de render do inventário.

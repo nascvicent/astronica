@@ -25,6 +25,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SuitConfig = require(ReplicatedStorage.Shared.SuitConfig)
 local SuitBuilder = require(ReplicatedStorage.Shared.SuitBuilder)
 local LaserConfig = require(ReplicatedStorage.Shared.LaserConfig)
+local InventoryModule = require(ReplicatedStorage.Shared.InventoryModule)
 
 local SuitService = Knit.CreateService({
 	Name = "SuitService",
@@ -97,6 +98,12 @@ local function getVisor(profile, suitId: string): string
 	end
 	local suit = SuitConfig.Get(suitId)
 	return suit and suit.defaultVisor or "gold"
+end
+
+--- Altura da mochila pelo nível (attribute que o InventoryService mantém).
+local function applyBackpack(player: Player, character: Model)
+	local level = player:GetAttribute(InventoryModule.BACKPACK_ATTRIBUTE)
+	SuitBuilder.SetBackpackHeight(character, InventoryModule.GetBackpackLevel(level or 1).height)
 end
 
 local function applyVisor(character: Model, colorId: string)
@@ -211,6 +218,7 @@ function SuitService:ApplySuit(player: Player, suitId: string)
 
 	copyCharacterScripts(oldCharacter, character)
 	applyVisor(character, getVisor(self:_getProfile(player), suitId))
+	applyBackpack(player, character)
 	SuitBuilder.SetLights(character, player:GetAttribute(FLASHLIGHT_ATTRIBUTE) == true)
 
 	-- Ferramentas equipadas voltam pra mochila
@@ -406,6 +414,14 @@ function SuitService:_onPlayer(player: Player)
 		local suitId = getPlayerSuit(player)
 		if current and current ~= suitId then
 			self:ApplySuit(player, suitId)
+		end
+	end)
+
+	-- Mochila subiu de nível: cresce na hora no traje em uso
+	player:GetAttributeChangedSignal(InventoryModule.BACKPACK_ATTRIBUTE):Connect(function()
+		local character = player.Character
+		if character and character:GetAttribute(SUIT_ATTRIBUTE) then
+			applyBackpack(player, character)
 		end
 	end)
 end

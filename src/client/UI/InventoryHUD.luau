@@ -18,6 +18,7 @@ local InventoryModule = require(Shared.InventoryModule)
 local ItemModels = require(Shared.ItemModels)
 local ShipData = require(Shared.ShipData)
 local ShipViewport = require(script.Parent.ShipViewport)
+local UIStyle = require(script.Parent.UIStyle)
 local SuitTab = require(script.Parent.SuitTab)
 
 local player = Players.LocalPlayer
@@ -48,7 +49,12 @@ local TB_OFFSET_X = 0.88    -- offset horizontal em relação à quick bar (posi
 local TB_OFFSET_Y = -0.17   -- offset vertical (negativo = para baixo); alinha a base com a dos slots
 
 -- Full inventory (grid 2D)
-local FULL_SLOT_COUNT = InventoryModule.DEFAULT_SLOTS
+-- Slots criados até o máximo da mochila; os além do maxSlots atual ficam escondidos
+local FULL_SLOT_COUNT = InventoryModule.MAX_SLOTS
+-- Faixa da mochila (nível + melhorar) embaixo do grid
+local BACKPACK_BAR_HEIGHT = 44
+-- Segundo clique em DESCARTAR precisa vir antes disso
+local DELETE_CONFIRM_TIME = 3
 local FULL_COLS = 5
 local FULL_CELL = 86        -- lado do slot em px (~16% maior que os 74 de antes)
 local FULL_CELL_GAP = 10
@@ -566,6 +572,9 @@ function InventoryHUD:_makeSlotInteractive(slot, index: number)
 end
 
 function InventoryHUD:_setSelected(index: number?)
+	if self._selectedSlot ~= index and self._deleteArmed then
+		self:_disarmDelete()
+	end
 	self._selectedSlot = index
 
 	for i, slot in self._fullSlots do
@@ -949,7 +958,7 @@ function InventoryHUD:_buildFullInventory()
 	-- ── Grid (sem caixa: só respiro) ──
 	local scrollFrame = Instance.new("ScrollingFrame")
 	scrollFrame.Name = "GridScroll"
-	scrollFrame.Size = UDim2.new(0.56, 0, 1, 0)
+	scrollFrame.Size = UDim2.new(0.56, 0, 1, -BACKPACK_BAR_HEIGHT)
 	scrollFrame.Position = UDim2.new(0, 0, 0, 0)
 	scrollFrame.BackgroundTransparency = 1
 	scrollFrame.BorderSizePixel = 0
@@ -986,9 +995,13 @@ function InventoryHUD:_buildFullInventory()
 	for i = 1, FULL_SLOT_COUNT do
 		local slot = self:_createSlotFrame(scrollFrame, true)
 		slot.frame.LayoutOrder = i
+		slot.frame.Visible = i <= InventoryModule.DEFAULT_SLOTS
 		self:_makeSlotInteractive(slot, i)
 		self._fullSlots[i] = slot
 	end
+	self._maxSlots = InventoryModule.DEFAULT_SLOTS
+
+	self:_buildBackpackBar(body)
 
 	-- Divisória vertical entre grid e preview
 	local bodyDivider = addDivider(body, false)
@@ -1100,6 +1113,18 @@ function InventoryHUD:_buildFullInventory()
 	itemQty.LayoutOrder = 4
 	itemQty.Visible = false
 	self._previewItemQty = itemQty
+
+	-- Descartar o slot selecionado (pede confirmação no segundo clique)
+	local deleteBtn, setDelete = UIStyle.button(itemInfo, "DESCARTAR", false)
+	deleteBtn.Name = "DeleteBtn"
+	deleteBtn.Size = UDim2.new(1, 0, 0, 32)
+	deleteBtn.LayoutOrder = 5
+	deleteBtn.Visible = false
+	self._deleteBtn = deleteBtn
+	self._setDeleteBtn = setDelete
+	deleteBtn.Activated:Connect(function()
+		self:_onDeleteActivated()
+	end)
 
 	-- Layout responsivo: recalcula quando a tela muda (rotação, janela redimensionada)
 	self._fullGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
@@ -1476,6 +1501,11 @@ function InventoryHUD:_showItemPreview(slotData, def)
 
 	self._previewItemQty.Visible = def.maxStack > 1
 	self._previewItemQty.Text = string.format("Quantidade: %d / %d", slotData.quantity, def.maxStack)
+
+	-- Descartar só vale pro item selecionado (não pro que está só sob o mouse)
+	local selected = self._selectedSlot and self._fullSlots[self._selectedSlot]
+	local isSelected = selected ~= nil and selected.data == slotData
+	self._deleteBtn.Visible = isSelected and InventoryModule.CanDelete(slotData.itemId)
 end
 
 function InventoryHUD:_showCharacterPreview(force: boolean?)
@@ -1496,6 +1526,126 @@ function InventoryHUD:_showCharacterPreview(force: boolean?)
 		then "Toque em um item para ver os detalhes."
 		else "Passe o mouse sobre um item para ver os detalhes."
 	self._previewItemQty.Visible = false
+	self._deleteBtn.Visible = false
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- Descartar item
+-- ═══════════════════════════════════════════════════════════
+
+function InventoryHUD:_disarmDelete()
+	self._deleteArmed = false
+	self._deleteToken = (self._deleteToken or 0) + 1
+	if self._setDeleteBtn then
+		self._setDeleteBtn(true, "DESCARTAR")
+	end
+end
+
+function InventoryHUD:_onDeleteActivated()
+	local slotIndex = self._selectedSlot
+	if not slotIndex then return end
+
+	if not self._deleteArmed then
+		self._deleteArmed = true
+		self._setDeleteBtn(true, "CONFIRMAR DESCARTE")
+		self._deleteToken = (self._deleteToken or 0) + 1
+		local token = self._deleteToken
+		task.delay(DELETE_CONFIRM_TIME, function()
+			if self._deleteToken == token and self._deleteArmed then
+				self:_disarmDelete()
+			end
+		end)
+		return
+	end
+
+	self:_disarmDelete()
+	self:_setSelected(nil)
+	if self._onDelete then
+		self._onDelete(slotIndex)
+	end
+end
+
+--- handler(slotIndex) — quem fala com o servidor é o controller.
+function InventoryHUD:SetDeleteHandler(handler)
+	self._onDelete = handler
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- Mochila (nível + melhorar)
+-- ═══════════════════════════════════════════════════════════
+
+function InventoryHUD:_buildBackpackBar(body: Instance)
+	local bar = Instance.new("Frame")
+	bar.Name = "BackpackBar"
+	bar.AnchorPoint = Vector2.new(0, 1)
+	bar.Position = UDim2.new(0, 14, 1, 0)
+	bar.Size = UDim2.new(0.56, -24, 0, BACKPACK_BAR_HEIGHT - 8)
+	bar.BackgroundTransparency = 1
+	bar.Parent = body
+	self._backpackBar = bar
+
+	local label = addLabel(bar, "Level", 13, FONT_MEDIUM, T.textSecondary)
+	label.Size = UDim2.new(1, -200, 1, 0)
+	label.TextTruncate = Enum.TextTruncate.AtEnd
+	self._backpackLabel = label
+
+	local button, setButton = UIStyle.button(bar, "MELHORAR", true)
+	button.Name = "UpgradeBtn"
+	button.AnchorPoint = Vector2.new(1, 0.5)
+	button.Position = UDim2.new(1, 0, 0.5, 0)
+	button.Size = UDim2.new(0, 190, 0, 30)
+	self._setBackpackBtn = setButton
+	self._backpackBtn = button
+	button.Activated:Connect(function()
+		local nextLevel = InventoryModule.BackpackLevels[(self._backpackLevel or 1) + 1]
+		if nextLevel and self._onUpgradeBackpack then
+			self._onUpgradeBackpack()
+		end
+	end)
+
+	self:_renderBackpackBar()
+end
+
+function InventoryHUD:_renderBackpackBar()
+	local level = InventoryModule.ClampBackpackLevel(self._backpackLevel or 1)
+	local current = InventoryModule.BackpackLevels[level]
+	local nextLevel = InventoryModule.BackpackLevels[level + 1]
+
+	self._backpackLabel.Text = string.format(
+		"%s   Nv %d / %d  ·  %d slots",
+		spaced("MOCHILA"),
+		level,
+		InventoryModule.MAX_BACKPACK_LEVEL,
+		current.slots
+	)
+
+	-- Texto sem o espaçamento letra a letra do UIStyle: com o preço não caberia
+	if nextLevel then
+		self._setBackpackBtn(true)
+		self._backpackBtn.Text = string.format("MELHORAR  ·  %s LUM", UIStyle.formatNumber(nextLevel.price))
+	else
+		self._setBackpackBtn(false)
+		self._backpackBtn.Text = "NÍVEL MÁXIMO"
+	end
+end
+
+--- handler() — pede pro servidor subir a mochila.
+function InventoryHUD:SetBackpackUpgradeHandler(handler)
+	self._onUpgradeBackpack = handler
+end
+
+--- Aviso curto no lugar do texto da mochila (ex: Lúmens insuficientes).
+function InventoryHUD:FlashBackpackMessage(text: string)
+	self._backpackLabel.Text = text
+	self._backpackLabel.TextColor3 = UIStyle.C.negative
+	self._backpackFlash = (self._backpackFlash or 0) + 1
+	local token = self._backpackFlash
+	task.delay(2.5, function()
+		if self._backpackFlash == token then
+			self._backpackLabel.TextColor3 = C.text
+			self:_renderBackpackBar()
+		end
+	end)
 end
 
 --- Cópia estática do personagem dentro de um WorldModel no viewport.
@@ -1662,6 +1812,7 @@ function InventoryHUD:_selectTab(index: number)
 	local shipTab = index == SHIP_TAB
 	local suitTab = index == SUIT_TAB
 	self._gridScroll.Visible = not shipTab and not suitTab
+	self._backpackBar.Visible = not shipTab and not suitTab
 	self._previewSection.Visible = not shipTab and not suitTab
 	self._bodyDivider.Visible = not shipTab and not suitTab
 	if self._shipTab then
@@ -1703,9 +1854,17 @@ function InventoryHUD:SetEquippedSlot(slotIndex: number?)
 end
 
 function InventoryHUD:UpdateAll(inventory)
+	-- Slots da mochila atual; os de cima ficam escondidos até ela crescer
+	self._maxSlots = math.clamp(inventory.maxSlots or InventoryModule.DEFAULT_SLOTS, 1, FULL_SLOT_COUNT)
+	self._backpackLevel = inventory.backpackLevel or 1
+	if self._selectedSlot and self._selectedSlot > self._maxSlots then
+		self:_setSelected(nil)
+	end
 	for i = 1, FULL_SLOT_COUNT do
+		self._fullSlots[i].frame.Visible = i <= self._maxSlots
 		self:_renderSlot(self._fullSlots[i], inventory.slots[i])
 	end
+	self:_renderBackpackBar()
 	for i = 1, QB_SLOT_COUNT do
 		self:_renderSlot(self._qbSlots[i], inventory.slots[i])
 	end
