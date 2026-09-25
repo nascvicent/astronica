@@ -82,6 +82,13 @@ InventoryModule.Items = {
 		maxStack = 32,
 		category = "resource",
 	},
+	gravitita = {
+		name = "Gravitita",
+		description = "Minério raro que dobra a gravidade à sua volta: flutua sozinho e puxa poeira para a própria órbita. Cobiçado para motores de warp e estabilizadores.",
+		rarity = "rare",
+		maxStack = 16,
+		category = "resource",
+	},
 	health_potion = {
 		name = "Health Potion",
 		description = "Dose de nanogel regenerativo. Recupera parte da vida ao ser consumida.",

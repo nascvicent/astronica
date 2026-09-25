@@ -94,6 +94,20 @@ BUILDERS.crystal_shard = function(model)
 	newMeshPart(model, Vector3.new(0.26, 0.65, 0.26), CFrame.new(-0.38, -0.3, -0.1) * CFrame.Angles(0, rad(45), rad(-18)), GRAY, Enum.MeshType.Prism)
 end
 
+-- Gravitita: rocha escura com cristais violeta e duas pedrinhas em órbita
+local GRAVITITA_ROCK = Color3.fromRGB(58, 48, 78)
+local GRAVITITA_CRYSTAL = Color3.fromRGB(175, 120, 255)
+local GRAVITITA_LIGHT = Color3.fromRGB(215, 185, 255)
+
+BUILDERS.gravitita = function(model)
+	newPart(model, Vector3.new(1.0, 0.8, 0.9), CFrame.new(0, -0.1, 0) * CFrame.Angles(rad(18), rad(25), rad(-10)), GRAVITITA_ROCK)
+	newPart(model, Vector3.new(0.6, 0.55, 0.6), CFrame.new(-0.4, 0.1, 0.2) * CFrame.Angles(rad(-20), rad(40), rad(25)), GRAVITITA_ROCK)
+	newMeshPart(model, Vector3.new(0.34, 0.95, 0.34), CFrame.new(0.15, 0.45, -0.05) * CFrame.Angles(0, rad(15), rad(-14)), GRAVITITA_CRYSTAL, Enum.MeshType.Prism)
+	newMeshPart(model, Vector3.new(0.24, 0.6, 0.24), CFrame.new(0.45, 0.2, 0.2) * CFrame.Angles(rad(10), rad(-30), rad(-38)), GRAVITITA_LIGHT, Enum.MeshType.Prism)
+	newPart(model, Vector3.new(0.16, 0.16, 0.16), CFrame.new(-0.75, 0.55, -0.1), GRAVITITA_LIGHT, Enum.PartType.Ball)
+	newPart(model, Vector3.new(0.11, 0.11, 0.11), CFrame.new(0.7, -0.45, 0.35), GRAVITITA_CRYSTAL, Enum.PartType.Ball)
+end
+
 -- Poção: frasco (esfera) + gargalo + rolha
 -- Part.Shape Cylinder tem o eixo em X: Size = (altura, diâmetro, diâmetro),
 -- e o Angles(0, 0, 90) deita esse eixo pra vertical.

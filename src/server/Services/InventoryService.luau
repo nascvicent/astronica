@@ -163,6 +163,29 @@ function InventoryService:AddItem(player: Player, itemId: string, quantity: numb
 	return true, "OK"
 end
 
+--- Quantas unidades do item ainda cabem (pilhas incompletas + slots vazios).
+--- Serve pra entregar só o que cabe, em vez de o AddItem entregar parte e
+--- responder falha.
+function InventoryService:GetSpaceFor(player: Player, itemId: string, metadata: { [string]: any }?): number
+	local data = self._inventoryData[player.UserId]
+	if not data or not InventoryModule.IsValidItem(itemId) then
+		return 0
+	end
+
+	local meta = metadata or {}
+	local maxStack = InventoryModule.GetMaxStack(itemId)
+	local space = 0
+	for slotIndex = 1, data.maxSlots do
+		local slot = data.slots[slotIndex]
+		if not slot then
+			space += maxStack
+		elseif slot.itemId == itemId and InventoryModule.MetadataMatch(slot.metadata, meta) then
+			space += math.max(maxStack - slot.quantity, 0)
+		end
+	end
+	return space
+end
+
 function InventoryService:RemoveItem(player: Player, slotIndex: number, quantity: number): (boolean, string)
 	assert(quantity > 0, "RemoveItem quantity must be positive")
 

@@ -10,6 +10,7 @@ require(script.Controllers.ShipController)
 require(script.Controllers.MapController)
 require(script.Controllers.HangarAmbienceController)
 require(script.Controllers.CombatController)
+require(script.Controllers.ShipMiningController)
 require(script.Controllers.FlightHudController)
 require(script.Controllers.SuitController)
 
